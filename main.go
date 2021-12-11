@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -36,10 +37,13 @@ var (
 	// e.g. "extern "C" {"
 	reExtern = regexp.MustCompile(`^(\s*)extern (.*)`)
 
-	// e.g. "void bar() {" or "virtual void bar() const = 0;"
-	reFunc          = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+[A-Za-z_]+\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const|)\s*(?:= 0|)\s*;$`)
-	reSimpleWord    = regexp.MustCompile(`^[a-z]+$`)
-	reNotSimpleWord = regexp.MustCompile(`^![a-z]+$`)
+	// e.g. "void bar();" or "virtual void bar() const = 0;"
+	// 1 is return type, 2 is name.
+	reFuncDeclaration = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const|)\s*(?:= 0|)\s*;$`)
+	// 1 is return type, 2 is name, 3 is args, 4 is brackets
+	reFuncImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
+	reSimpleWord         = regexp.MustCompile(`^[a-z]+$`)
+	reNotSimpleWord      = regexp.MustCompile(`^![a-z]+$`)
 
 	// e.g. "foo bar = baz();"
 	reAssignment = regexp.MustCompile(`^(\s*)[a-zA-Z<>\*:&]+ ([a-zA-Z_]+ )=( .+;)$`)
@@ -249,25 +253,57 @@ func fixCondition(lines []Line) []Line {
 	return out
 }
 
-// processFunctionDeclaration rewrite a function declaration to be closer to Go
-// style.
-func processFunctionDeclaration(lines []Line) []Line {
-	// Convert method
-	// Remove const
-	// Process argument type
-	//addThisPointer(out)
+// processFunctionDeclaration comments out forward declarations, grabbing
+// docstring along the way.
+//
+// Go doesn't need forward declaration.
+func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 	var out []Line
-	//insideFunc := false
 	for _, l := range lines {
-		// TODO(maruel): Ensure the code cannot be inside nested functions. The
-		// code base we process do not use this.
+		if m := reFuncDeclaration.FindStringSubmatch(l.code); m != nil {
+			if m[1] == "return" {
+				// It's super annoying that "return Foo();" triggers but there's
+				// nothing to do but explicitly ignore.
+				continue
+			}
+			l.doSkip()
+			// Associate the function description if available.
+			for i := len(out) - 1; i >= 0 && out[i].code == "" && out[i].comment != ""; i-- {
+				doc[m[2]] = append([]Line{out[i]}, doc[m[2]]...)
+				out[i].skip = true
+			}
+		}
+		out = append(out, l)
+	}
+	return out
+}
 
-		// TODO(maruel): Constructor, destructor, method.
-		// commentOutForwardFunc comments any forward declaration found. Go doesn't
-		// need these.
-		if m := reFunc.FindStringSubmatch(l.code); m != nil {
-			if m[1] != "return" {
-				l.doSkip()
+// processFunctionImplementation handles function implementations.
+//
+// It leverages doc that was populated in processFunctionDeclaration().
+func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
+	var out []Line
+	cur := ""
+	brackets := 0
+	for _, l := range lines {
+		brackets += strings.Count(l.code, "{")
+		brackets -= strings.Count(l.code, "}")
+		if m := reFuncImplementation.FindStringSubmatch(l.code); m != nil {
+			// 1 is return type, 2 is name, 3 is args, 4 is brackets
+			if m[1] == "return" {
+				panic(l.code)
+			}
+			if cur != "" {
+				panic(l.code)
+			}
+			if m[1] == "void" {
+				m[1] = ""
+			}
+			l.code = "func " + m[2] + "(" + m[3] + ") " + m[1] + " " + m[4]
+			name := strings.ReplaceAll(m[2], "::", ".")
+			if d := doc[name]; len(d) != 0 {
+				// Insert the doc there.
+				out = append(out, d...)
 			}
 		}
 		out = append(out, l)
@@ -277,6 +313,14 @@ func processFunctionDeclaration(lines []Line) []Line {
 
 // fixStatements handles statements inside a function.
 func fixStatements(lines []Line) []Line {
+	// TODO(maruel): Ensure the code cannot be inside nested functions. The
+	// code base we process do not use this.
+
+	// TODO(maruel): Constructor, destructor, method.
+	// Convert method
+	// Remove const
+	// Process argument type
+	//addThisPointer(out)
 	insideBlock := 0
 	var out []Line
 	for i, l := range lines {
@@ -304,7 +348,7 @@ func fixStatements(lines []Line) []Line {
 //
 // The resulting file is not syntactically valid Go but it will make manual fix
 // ups easier.
-func load(name string, keepSkip bool) (string, string) {
+func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 	raw, err := os.ReadFile(name)
 	if err != nil {
 		return "", ""
@@ -330,7 +374,8 @@ func load(name string, keepSkip bool) (string, string) {
 	lines = mergeParenthesis(lines)
 	lines = fixCondition(lines)
 	lines = commentExtern(lines)
-	lines = processFunctionDeclaration(lines)
+	lines = processFunctionDeclaration(lines, doc)
+	lines = processFunctionImplementation(lines, doc)
 	lines = fixStatements(lines)
 
 	//Comment assert()
@@ -362,14 +407,25 @@ func load(name string, keepSkip bool) (string, string) {
 
 // process processes a pair of .h/.cc files.
 func process(outDir, inDir, root string, keepSkip bool) error {
-	hdr1, c1 := load(filepath.Join(inDir, root+".h"), keepSkip)
-	hdr2, c2 := load(filepath.Join(inDir, root+".cc"), keepSkip)
+	f := filepath.Join(outDir, root+".go")
+	if content, _ := ioutil.ReadFile(f); len(content) != 0 {
+		if !bytes.Contains(content, []byte("//go:build nobuild")) {
+			// It is legitimate, do not overwrite.
+			return nil
+		}
+	}
+	doc := map[string][]Line{}
+	hdr1, c1 := load(filepath.Join(inDir, root+".h"), keepSkip, doc)
+	hdr2, c2 := load(filepath.Join(inDir, root+".cc"), keepSkip, doc)
+	if len(doc) != 0 {
+		log.Printf("%v", doc)
+	}
 	out := hdr1
 	if hdr1 != hdr2 {
 		out += hdr2
 	}
 	out += "\n//go:build nobuild\n\npackage ginga\n\n" + c1 + c2
-	return os.WriteFile(filepath.Join(outDir, root+".go"), []byte(out), 0o644)
+	return os.WriteFile(f, []byte(out), 0o644)
 }
 
 // gingaContent adds glue code to make transition a tad easier.
@@ -410,6 +466,7 @@ func mainImpl() error {
 		log.SetOutput(ioutil.Discard)
 	}
 
+	// Get the list of source files.
 	entries, err := os.ReadDir(*inDir)
 	if err != nil {
 		return err
@@ -422,9 +479,6 @@ func mainImpl() error {
 			continue
 		}
 		n = n[:len(n)-len(ext)]
-		if strings.HasSuffix(n, "_test") || strings.HasSuffix(n, "_perftest") || n == "test" {
-			continue
-		}
 		roots[n] = struct{}{}
 	}
 	if _, err := os.Stat(*outDir); os.IsNotExist(err) {
@@ -434,6 +488,8 @@ func mainImpl() error {
 	} else if err != nil {
 		return err
 	}
+
+	// Process all the source files in order.
 	files := make([]string, 0, len(roots))
 	for root := range roots {
 		files = append(files, root)
@@ -443,11 +499,14 @@ func mainImpl() error {
 		if err := process(*outDir, *inDir, root, *keepSkip); err != nil {
 			return err
 		}
-		break
 	}
+
+	// Inject a file with helpers.
 	if err := ioutil.WriteFile(filepath.Join(*outDir, "ginja.go"), []byte(gingaContent), 0o644); err != nil {
 		return err
 	}
+
+	// Insert a go.mod if missign.
 	if _, err := os.Stat(filepath.Join(*outDir, "go.mod")); os.IsNotExist(err) {
 		cmd := exec.Command("go", "mod", "init", "ginga")
 		cmd.Stdout = os.Stdout
