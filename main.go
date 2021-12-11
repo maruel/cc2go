@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -205,24 +206,31 @@ func fixCondition(lines []string) []string {
 	return out
 }
 
+// fixStatements handles statements inside a function.
 func fixStatements(lines []string) []string {
-	inside := 0
+	insideBlock := 0
+	var out []string
 	for _, l := range lines {
 		if reDoubleComment.MatchString(l) {
+			out = append(out, l)
 			continue
 		}
-		inside += strings.Count(l, "{")
-		inside -= strings.Count(l, "}")
-		if inside < 0 {
+		was := insideBlock
+		insideBlock += strings.Count(l, "{")
+		insideBlock -= strings.Count(l, "}")
+		if insideBlock < 0 {
 			panic(l)
 		}
-		if inside > 0 {
+		if was > 0 {
 			// Process a statement.
+			if strings.HasSuffix(l, ".clear();") {
+				l = l[:len(l)-len(".clear();")] + " = nil"
+			}
+			//Convert "foo bar = baz()" to "bar = baz()"
 		}
+		out = append(out, l)
 	}
-	return lines
-	//Convert ".clear()" to " = nil"
-	//Convert "foo bar = baz()" to "bar = baz()"
+	return out
 }
 
 // processFunctionDeclaration rewrite a function declaration to be closer to Go
@@ -253,6 +261,10 @@ func processFunctionDeclaration(lines []string) []string {
 	return out
 }
 
+// load loads a single .h/.cc and processes it to make it closer to Go.
+//
+// The resulting file is not syntactically valid Go but it will make manual fix
+// ups easier.
 func load(name string) string {
 	log.Printf("%s", name)
 	raw, err := os.ReadFile(name)
@@ -271,9 +283,9 @@ func load(name string) string {
 	// Make a second context aware pass.
 	lines = mergeParenthesis(lines)
 	lines = fixCondition(lines)
-	lines = fixStatements(lines)
 	lines = commentExtern(lines)
 	lines = processFunctionDeclaration(lines)
+	lines = fixStatements(lines)
 
 	//addThisPointer(out)
 	//Comment assert()
@@ -293,6 +305,7 @@ func load(name string) string {
 	return out
 }
 
+// process processes a pair of .h/.cc files.
 func process(outDir, root string) error {
 	out := "package ginga\n\n"
 	out += load(root + ".h")
@@ -359,7 +372,14 @@ func mainImpl() error {
 			return err
 		}
 	}
-	return ioutil.WriteFile(filepath.Join(outDir, "ginja.go"), []byte(gingaContent), 0o644)
+	if err := ioutil.WriteFile(filepath.Join(outDir, "ginja.go"), []byte(gingaContent), 0o644); err != nil {
+		return err
+	}
+	cmd := exec.Command("go", "mod", "init", "ginga")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Dir = outDir
+	return cmd.Run()
 }
 
 func main() {
