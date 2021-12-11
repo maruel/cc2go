@@ -341,7 +341,7 @@ func mainImpl() error {
 		n := e.Name()
 		ext := filepath.Ext(n)
 		n = n[:len(n)-len(ext)]
-		if strings.HasSuffix(n, "_test") || strings.HasSuffix(n, "_perftest") {
+		if strings.HasSuffix(n, "_test") || strings.HasSuffix(n, "_perftest") || n == "test" {
 			continue
 		}
 		roots[n] = struct{}{}
