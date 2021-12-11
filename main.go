@@ -5,7 +5,8 @@
 package main
 
 import (
-	"log"
+	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,14 +15,23 @@ import (
 )
 
 var (
-	reForwardStruct  = regexp.MustCompile(`^struct [A-Za-z]+;$`)
-	reForwardFunc    = regexp.MustCompile(`^(\s*)([a-zA-Z]+)\s+[A-Za-z_]+\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const |);$`)
+	// e.g. "struct Foo;"
+	reForwardStruct = regexp.MustCompile(`^struct [A-Za-z]+;$`)
+	// e.g. "void bar();" or "virtual void bar() const = 0;"
+	reForwardFunc = regexp.MustCompile(`^(\s*)(?:virtual |)([a-zA-Z]+)\s+[A-Za-z_]+\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const |)(?: = 0|);$`)
+	// e.g. "/// Foo." used for doxyge.
 	reTrippleComment = regexp.MustCompile(`^(\s*)///(.*)`)
 	reDoubleComment  = regexp.MustCompile(`^(\s*)//(.*)`)
-	reStructAccess   = regexp.MustCompile(`^(\s*)(public|protected|private):$`)
-	reExtern         = regexp.MustCompile(`^(\s*)extern (.*)`)
-	reConstMethod    = regexp.MustCompile(`^(.+)\) const {$`)
-	reStd            = regexp.MustCompile(`std::`)
+	// e.g. "protected:"
+	reStructAccess = regexp.MustCompile(`^(\s*)(public|protected|private):$`)
+	// e.g. "extern "C""
+	reExtern = regexp.MustCompile(`^(\s*)extern (.*)`)
+	// e.g. "void bar() const {"
+	reConstMethod = regexp.MustCompile(`^(.+)\) const {$`)
+	// Not a disease.
+	reStd = regexp.MustCompile(`std::`)
+	// A string.
+	reConstChar = regexp.MustCompile(`const char\s?\*`)
 )
 
 var asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
@@ -36,8 +46,8 @@ func countSpaces(l string) int {
 	return i
 }
 
-// processLine processes the low hanging fruits first.
-func processLine(l string) string {
+// phase1ProcessLine processes the low hanging fruits first.
+func phase1ProcessLine(l string) string {
 	// Just ignore.
 	if strings.HasPrefix(l, "#") {
 		return "// " + l
@@ -66,6 +76,7 @@ func processLine(l string) string {
 
 	// Actual code.
 	l = reStd.ReplaceAllString(l, "")
+	l = reConstChar.ReplaceAllString(l, "string")
 	if reConstMethod.MatchString(l) {
 		return reConstMethod.ReplaceAllString(l, "$1) {")
 	}
@@ -74,18 +85,18 @@ func processLine(l string) string {
 
 // mergeParenthesis makes all () on one line to make function declaration
 // easier to parse.
-func mergeParenthesis(lines []string) string {
+func mergeParenthesis(lines []string) []string {
 	count := 0
-	out := ""
+	out := []string{""}
 	for _, l := range lines {
 		if count > 0 {
 			// Merging.
 			l = " " + l[countSpaces(l):]
 		}
-		out += l
+		out[len(out)-1] = out[len(out)-1] + l
 		if strings.HasPrefix(l[countSpaces(l):], "//") {
 			// Ignore comments within parenthesis.
-			out += "\n"
+			out = append(out, "")
 			continue
 		}
 		count += strings.Count(l, "(")
@@ -94,13 +105,15 @@ func mergeParenthesis(lines []string) string {
 			panic(count)
 		}
 		if count == 0 {
-			out += "\n"
+			out = append(out, "")
 		}
 	}
 	return out
 }
 
-func handleForwardFunc(l string) string {
+// commentOutForwardFunc comments any forward declaration found. Go doesn't
+// need these.
+func commentOutForwardFunc(l string) string {
 	if m := reForwardFunc.FindStringSubmatch(l); m != nil {
 		if m[2] == "return" {
 			return l
@@ -110,6 +123,10 @@ func handleForwardFunc(l string) string {
 		return l[:c] + "//" + l[c:]
 	}
 	return l
+}
+
+func fixOnelinerCondition(lines []string) []string {
+	return lines
 }
 
 // processFunctionDeclaration rewrite a function declaration to be closer to Go
@@ -131,29 +148,33 @@ func load(name string) string {
 	// Do a first pass to trim obvious stuff.
 	lines := strings.Split(string(raw), "\n")
 	for i, l := range lines {
-		lines[i] = processLine(l)
+		lines[i] = phase1ProcessLine(l)
 	}
 
 	// Make a second context aware pass.
-	lines = strings.Split(mergeParenthesis(lines), "\n")
+	lines = mergeParenthesis(lines)
+
 	for i, l := range lines {
 		if reDoubleComment.MatchString(l) {
 			continue
 		}
-		lines[i] = handleForwardFunc(l)
-		//out = processFunctionDeclaration(out)
-		//fixOnelinerCondition(out)
-		//fixPointerReference(out)
-		//addThisPointer(out)
-		//Remove ".c_str()"
-		//Convert ".clear()" to " = nil"
-		//Convert ".empty()" to " == nil"
-		//Comment assert()
-		//Convert "foo bar = baz()" to "bar = baz()"
-		//Convert "set<foo>" to "map[foo]struct{}"
-		//Convert "vector<foo>" to "[]foo"
-		//Convert enum
+		lines[i] = commentOutForwardFunc(l)
 	}
+
+	//out = processFunctionDeclaration(out)
+	//fixOnelinerCondition(out)
+	//fixPointerReference(out)
+	//addThisPointer(out)
+	//Remove ".c_str()"
+	//Convert ".clear()" to " = nil"
+	//Convert ".empty()" to " == nil"
+	//Comment assert()
+	//Convert "foo bar = baz()" to "bar = baz()"
+	//Convert "set<foo>" to "map[foo]struct{}"
+	//Convert "vector<foo>" to "[]foo"
+	//Convert enum
+	//Comment out namespace
+
 	out := ""
 	for _, l := range lines {
 		// At the very end, remove the trailing ;
@@ -172,11 +193,36 @@ func process(outDir, root string) error {
 	return os.WriteFile(filepath.Join(outDir, root+".go"), []byte(out), 0o644)
 }
 
-func main() {
+const gingaContent = `package ginga
+
+import (
+  "io"
+  "os"
+)
+
+var (
+  stdout = os.Stdout
+  stderr = os.Stderr
+)
+
+func assert(b bool) {
+  panic(b)
+}
+
+func printf(fmt string, v...interface{}) {
+  fmt.Printf(fmt, v...)
+}
+
+func fprintf(w io.Writer, fmt string, v...interface{}) {
+  fmt.Fprintf(w, fmt, v...)
+}
+`
+
+func mainImpl() error {
 	outDir := "go2"
 	entries, err := os.ReadDir(".")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	roots := map[string]struct{}{}
 	for _, e := range entries {
@@ -189,7 +235,7 @@ func main() {
 		roots[n] = struct{}{}
 	}
 	if err := os.Mkdir(outDir, 0o755); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	files := make([]string, 0, len(roots))
 	for root := range roots {
@@ -198,7 +244,15 @@ func main() {
 	sort.Strings(files)
 	for _, root := range files {
 		if err := process(outDir, root); err != nil {
-			log.Fatal(err)
+			return err
 		}
+	}
+	return ioutil.WriteFile(filepath.Join(outDir, "ginja.go"), []byte(gingaContent), 0o644)
+}
+
+func main() {
+	if err := mainImpl(); err != nil {
+		fmt.Fprintf(os.Stderr, "cc2go: %s\n", err)
+		os.Exit(1)
 	}
 }
