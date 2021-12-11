@@ -41,6 +41,9 @@ var (
 	reFunc          = regexp.MustCompile(`^(\s*)(?:virtual |)([a-zA-Z]+)\s+[A-Za-z_]+\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const |)(?: = 0|);$`)
 	reSimpleWord    = regexp.MustCompile(`^[a-z]+$`)
 	reNotSimpleWord = regexp.MustCompile(`^![a-z]+$`)
+
+	// e.g. "foo bar = baz();"
+	reAssignment = regexp.MustCompile(`^(\s*)[a-zA-Z<>\*:&]+ ([a-zA-Z_]+ )=( .+;)$`)
 )
 
 var asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
@@ -206,6 +209,34 @@ func fixCondition(lines []string) []string {
 	return out
 }
 
+// processFunctionDeclaration rewrite a function declaration to be closer to Go
+// style.
+func processFunctionDeclaration(lines []string) []string {
+	// Convert method
+	// Remove const
+	// Process argument type
+	//addThisPointer(out)
+	var out []string
+	for _, l := range lines {
+		if reDoubleComment.MatchString(l) {
+			out = append(out, l)
+			continue
+		}
+		// TODO(maruel): Constructor, destructor, method.
+		// commentOutForwardFunc comments any forward declaration found. Go doesn't
+		// need these.
+		if m := reFunc.FindStringSubmatch(l); m != nil {
+			if m[2] != "return" {
+				// White spaces in front.
+				c := len(m[1])
+				l = l[:c] + "//" + l[c:]
+			}
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
 // fixStatements handles statements inside a function.
 func fixStatements(lines []string) []string {
 	insideBlock := 0
@@ -225,35 +256,9 @@ func fixStatements(lines []string) []string {
 			// Process a statement.
 			if strings.HasSuffix(l, ".clear();") {
 				l = l[:len(l)-len(".clear();")] + " = nil"
-			}
-			//Convert "foo bar = baz()" to "bar = baz()"
-		}
-		out = append(out, l)
-	}
-	return out
-}
-
-// processFunctionDeclaration rewrite a function declaration to be closer to Go
-// style.
-func processFunctionDeclaration(lines []string) []string {
-	// Convert method
-	// Remove const
-	// Rewrite const string& to string
-	// Process argument type
-	var out []string
-	for _, l := range lines {
-		if reDoubleComment.MatchString(l) {
-			out = append(out, l)
-			continue
-		}
-		// TODO(maruel): Constructor, destructor, method.
-		// commentOutForwardFunc comments any forward declaration found. Go doesn't
-		// need these.
-		if m := reFunc.FindStringSubmatch(l); m != nil {
-			if m[2] != "return" {
-				// White spaces in front.
-				c := len(m[1])
-				l = l[:c] + "//" + l[c:]
+			} else if m := reAssignment.FindStringSubmatch(l); m != nil {
+				//Convert "foo bar = baz();" to "bar := baz();"
+				l = m[1] + m[2] + ":=" + m[3]
 			}
 		}
 		out = append(out, l)
@@ -287,16 +292,15 @@ func load(name string) string {
 	lines = processFunctionDeclaration(lines)
 	lines = fixStatements(lines)
 
-	//addThisPointer(out)
 	//Comment assert()
 	//Convert "set<foo>" to "map[foo]struct{}"
 	//Convert "vector<foo>" to "[]foo"
 	//Convert enum
 	//Comment out namespace
 
+	// At the very end, remove the trailing ;
 	out := ""
 	for _, l := range lines {
-		// At the very end, remove the trailing ;
 		if strings.HasSuffix(l, ";") {
 			l = l[:len(l)-1]
 		}
@@ -313,6 +317,7 @@ func process(outDir, root string) error {
 	return os.WriteFile(filepath.Join(outDir, root+".go"), []byte(out), 0o644)
 }
 
+// gingaContent adds glue code to make transition a tad easier.
 const gingaContent = `package ginga
 
 import (
