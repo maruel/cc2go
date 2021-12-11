@@ -392,9 +392,7 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 		if !keepSkip && l.skip {
 			continue
 		}
-		if strings.HasSuffix(l.code, ";") {
-			l.code = l.code[:len(l.code)-1]
-		}
+		l.code = strings.TrimSuffix(l.code, ";")
 		s := l.String()
 		if wasEmpty && s == "" {
 			continue
