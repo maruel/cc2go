@@ -38,7 +38,7 @@ var (
 	reExtern = regexp.MustCompile(`^(\s*)extern (.*)`)
 
 	// e.g. "void bar() {" or "virtual void bar() const = 0;"
-	reFunc          = regexp.MustCompile(`^(\s*)(?:virtual |)([a-zA-Z]+)\s+[A-Za-z_]+\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const |)(?: = 0|);$`)
+	reFunc          = regexp.MustCompile(`^(\s*)(?:virtual |)([a-zA-Z<>*]+)\s+[A-Za-z_]+\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const|)\s*(?:= 0|)\s*;$`)
 	reSimpleWord    = regexp.MustCompile(`^[a-z]+$`)
 	reNotSimpleWord = regexp.MustCompile(`^![a-z]+$`)
 
@@ -65,7 +65,7 @@ func phase1ProcessLine(l string) string {
 		return "// " + l
 	}
 	if reForwardStruct.MatchString(l) {
-		return "// " + l
+		return "//" + l
 	}
 	if m := reStructAccess.FindStringSubmatch(l); m != nil {
 		c := len(m[1])
@@ -217,11 +217,15 @@ func processFunctionDeclaration(lines []string) []string {
 	// Process argument type
 	//addThisPointer(out)
 	var out []string
+	//insideFunc := false
 	for _, l := range lines {
 		if reDoubleComment.MatchString(l) {
 			out = append(out, l)
 			continue
 		}
+		// TODO(maruel): Ensure the code cannot be inside nested functions. The
+		// code base we process do not use this.
+
 		// TODO(maruel): Constructor, destructor, method.
 		// commentOutForwardFunc comments any forward declaration found. Go doesn't
 		// need these.
@@ -270,17 +274,26 @@ func fixStatements(lines []string) []string {
 //
 // The resulting file is not syntactically valid Go but it will make manual fix
 // ups easier.
-func load(name string) string {
+func load(name string) (string, string) {
 	log.Printf("%s", name)
 	raw, err := os.ReadFile(name)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 
 	// Do a first pass to trim obvious stuff.
-	lines := strings.Split(string(raw), "\n")
-	for i, l := range lines {
-		lines[i] = phase1ProcessLine(l)
+	var lines []string
+	hdr := ""
+	inHdr := true
+	for _, l := range strings.Split(string(raw), "\n") {
+		if inHdr {
+			if strings.HasPrefix(l, "//") {
+				hdr += l + "\n"
+				continue
+			}
+			inHdr = false
+		}
+		lines = append(lines, phase1ProcessLine(l))
 	}
 
 	lines = commentDefines(lines)
@@ -306,14 +319,18 @@ func load(name string) string {
 		}
 		out += l + "\n"
 	}
-	return out
+	return hdr, out
 }
 
 // process processes a pair of .h/.cc files.
 func process(outDir, root string) error {
-	out := "package ginga\n\n"
-	out += load(root + ".h")
-	out += load(root + ".cc")
+	hdr1, c1 := load(root + ".h")
+	hdr2, c2 := load(root + ".cc")
+	out := hdr1
+	if hdr1 != hdr2 {
+		out += hdr2
+	}
+	out += "\n//go:build nobuild\n\npackage ginga\n\n" + c1 + c2
 	return os.WriteFile(filepath.Join(outDir, root+".go"), []byte(out), 0o644)
 }
 
@@ -321,6 +338,7 @@ func process(outDir, root string) error {
 const gingaContent = `package ginga
 
 import (
+  "fmt"
   "io"
   "os"
 )
@@ -334,22 +352,23 @@ func assert(b bool) {
   panic(b)
 }
 
-func printf(fmt string, v...interface{}) {
-  fmt.Printf(fmt, v...)
+func printf(f string, v...interface{}) {
+  fmt.Printf(f, v...)
 }
 
-func fprintf(w io.Writer, fmt string, v...interface{}) {
-  fmt.Fprintf(w, fmt, v...)
+func fprintf(w io.Writer, f string, v...interface{}) {
+  fmt.Fprintf(w, f, v...)
 }
 `
 
 func mainImpl() error {
 	v := flag.Bool("v", false, "verbose")
+	outDir := flag.String("o", "go2", "output directory")
 	flag.Parse()
 	if !*v {
 		log.SetOutput(ioutil.Discard)
 	}
-	outDir := "go2"
+
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		return err
@@ -364,7 +383,7 @@ func mainImpl() error {
 		}
 		roots[n] = struct{}{}
 	}
-	if err := os.Mkdir(outDir, 0o755); err != nil {
+	if err := os.Mkdir(*outDir, 0o755); err != nil {
 		return err
 	}
 	files := make([]string, 0, len(roots))
@@ -373,17 +392,17 @@ func mainImpl() error {
 	}
 	sort.Strings(files)
 	for _, root := range files {
-		if err := process(outDir, root); err != nil {
+		if err := process(*outDir, root); err != nil {
 			return err
 		}
 	}
-	if err := ioutil.WriteFile(filepath.Join(outDir, "ginja.go"), []byte(gingaContent), 0o644); err != nil {
+	if err := ioutil.WriteFile(filepath.Join(*outDir, "ginja.go"), []byte(gingaContent), 0o644); err != nil {
 		return err
 	}
 	cmd := exec.Command("go", "mod", "init", "ginga")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Dir = outDir
+	cmd.Dir = *outDir
 	return cmd.Run()
 }
 
