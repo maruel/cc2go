@@ -15,9 +15,10 @@ import (
 
 var (
 	reForwardStruct  = regexp.MustCompile(`^struct [A-Za-z]+;$`)
-	reForwardFunc    = regexp.MustCompile(`^\s*([a-zA-Z]+)\s+[A-Za-z_]+\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const |)$`)
+	reForwardFunc    = regexp.MustCompile(`^(\s*)([a-zA-Z]+)\s+[A-Za-z_]+\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const |);$`)
 	reTrippleComment = regexp.MustCompile(`^(\s*)///(.*)`)
 	reDoubleComment  = regexp.MustCompile(`^(\s*)//(.*)`)
+	reStructAccess   = regexp.MustCompile(`^(\s*)(public|protected|private):$`)
 	reExtern         = regexp.MustCompile(`^(\s*)extern (.*)`)
 	reConstMethod    = regexp.MustCompile(`^(.+)\) const {$`)
 	reStd            = regexp.MustCompile(`std::`)
@@ -50,8 +51,9 @@ func processLine(l string) string {
 	if reExtern.MatchString(l) {
 		return "// " + l
 	}
-	if strings.HasSuffix(l, "public:") || strings.HasSuffix(l, "protected:") || strings.HasSuffix(l, "private:") {
-		return "// " + l
+	if m := reStructAccess.FindStringSubmatch(l); m != nil {
+		c := len(m[1])
+		return l[:c] + "//" + l[c:]
 	}
 
 	// Fix comments.
@@ -67,10 +69,6 @@ func processLine(l string) string {
 	if reConstMethod.MatchString(l) {
 		return reConstMethod.ReplaceAllString(l, "$1) {")
 	}
-	if strings.HasSuffix(l, ";") {
-		l = l[:len(l)-1]
-	}
-
 	return l
 }
 
@@ -104,10 +102,11 @@ func mergeParenthesis(lines []string) string {
 
 func handleForwardFunc(l string) string {
 	if m := reForwardFunc.FindStringSubmatch(l); m != nil {
-		if m[1] == "return" {
+		if m[2] == "return" {
 			return l
 		}
-		c := countSpaces(l)
+		// White spaces in front.
+		c := len(m[1])
 		return l[:c] + "//" + l[c:]
 	}
 	return l
@@ -157,6 +156,10 @@ func load(name string) string {
 	}
 	out := ""
 	for _, l := range lines {
+		// At the very end, remove the trailing ;
+		if strings.HasSuffix(l, ";") {
+			l = l[:len(l)-1]
+		}
 		out += l + "\n"
 	}
 	return out
