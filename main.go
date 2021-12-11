@@ -22,11 +22,9 @@ var (
 
 	// e.g. "struct Foo;"
 	reForwardStruct = regexp.MustCompile(`^struct [A-Za-z]+;$`)
-	// e.g. "/// Foo." used for doxyge.
-	reTrippleComment = regexp.MustCompile(`^(\s*)///(.*)`)
-	reDoubleComment  = regexp.MustCompile(`^(\s*)//(.*)`)
+	reDoubleComment = regexp.MustCompile(`^(\s*)//(.*)`)
 	// e.g. "protected:"
-	reStructAccess = regexp.MustCompile(`^(\s*)(public|protected|private):$`)
+	reStructAccess = regexp.MustCompile(`^(public|protected|private):$`)
 	// e.g. "void bar() const {"
 	reConstMethod = regexp.MustCompile(`^(.+)\) const {$`)
 	// A string.
@@ -38,7 +36,7 @@ var (
 	reExtern = regexp.MustCompile(`^(\s*)extern (.*)`)
 
 	// e.g. "void bar() {" or "virtual void bar() const = 0;"
-	reFunc          = regexp.MustCompile(`^(\s*)(?:virtual |)([a-zA-Z<>*]+)\s+[A-Za-z_]+\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const|)\s*(?:= 0|)\s*;$`)
+	reFunc          = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+[A-Za-z_]+\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const|)\s*(?:= 0|)\s*;$`)
 	reSimpleWord    = regexp.MustCompile(`^[a-z]+$`)
 	reNotSimpleWord = regexp.MustCompile(`^![a-z]+$`)
 
@@ -58,52 +56,79 @@ func countSpaces(l string) int {
 	return i
 }
 
-// phase1ProcessLine processes the low hanging fruits first.
-func phase1ProcessLine(l string) string {
-	// Just ignore.
-	if strings.HasPrefix(l, "using namespace") {
-		return "// " + l
+type Line struct {
+	original []string
+
+	// The final line is indent + code + comment.
+
+	// The whitespace indentation
+	indent string
+	// Any valid statement
+	code string
+	// Includes the "//"
+	comment string
+}
+
+// processLine processes the low hanging fruits first.
+func processLine(l string) Line {
+	c := countSpaces(l)
+	out := Line{
+		original: []string{l},
+		indent:   l[:c],
 	}
-	if reForwardStruct.MatchString(l) {
-		return "//" + l
+	l = l[c:]
+
+	// Used for doxygen comments.
+	if strings.HasPrefix(l, "///") {
+		l = l[1:]
 	}
-	if m := reStructAccess.FindStringSubmatch(l); m != nil {
-		c := len(m[1])
-		return l[:c] + "//" + l[c:]
+	if a := strings.Index(l, "//"); a != -1 {
+		out.code = l[:a]
+		out.comment = l[a:]
+	} else {
+		out.code = l
 	}
 
-	// Fix comments.
-	if reTrippleComment.MatchString(l) {
-		return reTrippleComment.ReplaceAllString(l, "$1//$2")
+	// Ignore C++ statements that are unnecessary in Go.
+	if strings.HasPrefix(out.code, "using namespace") {
+		out.comment = "// " + out.code
+		out.code = ""
 	}
-	if reDoubleComment.MatchString(l) {
-		return l
+	if reForwardStruct.MatchString(out.code) {
+		out.comment = "// " + out.code
+		out.code = ""
+	}
+	if m := reStructAccess.FindStringSubmatch(out.code); m != nil {
+		out.comment = "// " + out.code
+		out.code = ""
 	}
 
 	// Actual code.
-	l = strings.ReplaceAll(l, "std::", "")
-	l = strings.ReplaceAll(l, "const string&", "string")
-	l = strings.ReplaceAll(l, ".c_str()", "")
-	l = strings.ReplaceAll(l, "->", ".")
-	l = strings.ReplaceAll(l, "NULL", "nil")
-	l = reConstChar.ReplaceAllString(l, "string")
-	if reConstMethod.MatchString(l) {
-		return reConstMethod.ReplaceAllString(l, "$1) {")
+	out.code = strings.ReplaceAll(out.code, "std::", "")
+	out.code = strings.ReplaceAll(out.code, "const string&", "string")
+	out.code = strings.ReplaceAll(out.code, ".c_str()", "")
+	out.code = strings.ReplaceAll(out.code, "->", ".")
+	out.code = strings.ReplaceAll(out.code, "NULL", "nil")
+	out.code = reConstChar.ReplaceAllString(out.code, "string")
+	if reConstMethod.MatchString(out.code) {
+		out.code = reConstMethod.ReplaceAllString(out.code, "$1) {")
 	}
-	return l
+	return out
 }
 
 // commentDefines handles includes and defines, including multi-lines defines.
-func commentDefines(lines []string) []string {
-	var out []string
+func commentDefines(lines []Line) []Line {
+	var out []Line
 	indef := false
 	for _, l := range lines {
-		if strings.HasPrefix(l, "#") {
-			indef = strings.HasSuffix(l, "\\")
-			l = "//" + l
+		if strings.HasPrefix(l.code, "#") {
+			indef = strings.HasSuffix(l.code, "\\")
+			l.comment = "//" + l.code
+			l.code = ""
 		} else if indef {
-			indef = strings.HasSuffix(l, "\\")
-			l = "//" + l
+			indef = strings.HasSuffix(l.code, "\\")
+			l.comment = "//" + l.code
+			l.code = ""
 		} else {
 			indef = false
 		}
@@ -112,21 +137,21 @@ func commentDefines(lines []string) []string {
 	return out
 }
 
-func commentExtern(lines []string) []string {
-	var out []string
+func commentExtern(lines []Line) []Line {
+	var out []Line
 	inextern := 0
 	for _, l := range lines {
-		if m := reExtern.FindStringSubmatch(l); m != nil {
-			l = m[1] + "//" + l[len(m[1]):]
-			if strings.HasSuffix(l, "{") {
+		if m := reExtern.FindStringSubmatch(l.code); m != nil {
+			l.code = m[1] + "//" + l.code[len(m[1]):]
+			if strings.HasSuffix(l.code, "{") {
 				inextern++
 			}
 		} else if inextern > 0 {
-			if strings.TrimSpace(l) == "}" {
+			if strings.TrimSpace(l.code) == "}" {
 				inextern--
 			}
-			c := countSpaces(l)
-			l = l[:c] + "//" + l[c:]
+			l.comment = "//" + l.code
+			l.code = ""
 		}
 		out = append(out, l)
 	}
@@ -135,27 +160,30 @@ func commentExtern(lines []string) []string {
 
 // mergeParenthesis makes all () on one line to make function declaration
 // easier to parse.
-func mergeParenthesis(lines []string) []string {
+func mergeParenthesis(lines []Line) []Line {
+	out := []Line{}
+	acc := Line{}
 	count := 0
-	out := []string{""}
 	for _, l := range lines {
-		if count > 0 {
-			// Merging.
-			l = " " + l[countSpaces(l):]
+		if count == 0 {
+			acc.indent = l.indent
 		}
-		out[len(out)-1] = out[len(out)-1] + l
-		if strings.HasPrefix(l[countSpaces(l):], "//") {
-			// Ignore comments within parenthesis.
-			out = append(out, "")
-			continue
-		}
-		count += strings.Count(l, "(")
-		count -= strings.Count(l, ")")
+		count += strings.Count(l.code, "(")
+		count -= strings.Count(l.code, ")")
 		if count < 0 {
 			panic(count)
-		}
-		if count == 0 {
-			out = append(out, "")
+		} else {
+			// Merging matching ) to the previous line containing the (.
+			acc.original = append(acc.original, l.original...)
+			acc.code += l.code
+			acc.comment += l.comment
+			if count == 0 {
+				// Output the line.
+				out = append(out, acc)
+				acc = Line{indent: l.indent}
+			} else {
+				acc.code += " "
+			}
 		}
 	}
 	return out
@@ -164,23 +192,21 @@ func mergeParenthesis(lines []string) []string {
 // fixCondition does two things:
 //  - Remove the extra parenthesis.
 //  - Fix one liners.
-func fixCondition(lines []string) []string {
-	var out []string
+func fixCondition(lines []Line) []Line {
+	var out []Line
 	var insertClosingBracket []string
 	for _, l := range lines {
-		c := countSpaces(l)
-		m := l[c:]
-		if strings.HasPrefix(m, "if (") {
+		if strings.HasPrefix(l.code, "if (") {
 			// There's a comment at least once so don't use HasSuffix.
-			if !strings.Contains(m, "{") {
+			if !strings.Contains(l.code, "{") {
 				// One liner.
-				l += " {"
-				insertClosingBracket = append(insertClosingBracket, l[:c])
+				l.code += " {"
+				insertClosingBracket = append(insertClosingBracket, l.indent)
 			}
 			// Trim the very first and very last parenthesis. There can be inside due
 			// to function calls.
-			i := strings.LastIndex(l, ")")
-			cond := l[c+4 : i]
+			i := strings.LastIndex(l.code, ")")
+			cond := l.code[4:i]
 			// For conditions with nothing but a word, let's assume it checks for
 			// nil. It's going to be wrong often but I think it's more often right
 			// than wrong.
@@ -195,12 +221,12 @@ func fixCondition(lines []string) []string {
 				// if (!foo.empty())
 				cond = "len(" + cond[1:len(cond)-len(".empty()")] + ") != 0"
 			}
-			l = l[:c] + "if " + cond + l[i+1:]
+			l.code = "if " + cond + l.code[i+1:]
 			out = append(out, l)
 		} else if len(insertClosingBracket) != 0 {
 			// TODO(maruel): "else if"
 			out = append(out, l)
-			out = append(out, insertClosingBracket[len(insertClosingBracket)-1]+"}")
+			out = append(out, Line{indent: insertClosingBracket[len(insertClosingBracket)-1], code: "}"})
 			insertClosingBracket = insertClosingBracket[:len(insertClosingBracket)-1]
 		} else {
 			out = append(out, l)
@@ -211,29 +237,25 @@ func fixCondition(lines []string) []string {
 
 // processFunctionDeclaration rewrite a function declaration to be closer to Go
 // style.
-func processFunctionDeclaration(lines []string) []string {
+func processFunctionDeclaration(lines []Line) []Line {
 	// Convert method
 	// Remove const
 	// Process argument type
 	//addThisPointer(out)
-	var out []string
+	var out []Line
 	//insideFunc := false
 	for _, l := range lines {
-		if reDoubleComment.MatchString(l) {
-			out = append(out, l)
-			continue
-		}
 		// TODO(maruel): Ensure the code cannot be inside nested functions. The
 		// code base we process do not use this.
 
 		// TODO(maruel): Constructor, destructor, method.
 		// commentOutForwardFunc comments any forward declaration found. Go doesn't
 		// need these.
-		if m := reFunc.FindStringSubmatch(l); m != nil {
-			if m[2] != "return" {
+		if m := reFunc.FindStringSubmatch(l.code); m != nil {
+			if m[1] != "return" {
 				// White spaces in front.
-				c := len(m[1])
-				l = l[:c] + "//" + l[c:]
+				l.comment = "//" + l.code
+				l.code = ""
 			}
 		}
 		out = append(out, l)
@@ -242,27 +264,23 @@ func processFunctionDeclaration(lines []string) []string {
 }
 
 // fixStatements handles statements inside a function.
-func fixStatements(lines []string) []string {
+func fixStatements(lines []Line) []Line {
 	insideBlock := 0
-	var out []string
+	var out []Line
 	for _, l := range lines {
-		if reDoubleComment.MatchString(l) {
-			out = append(out, l)
-			continue
-		}
 		was := insideBlock
-		insideBlock += strings.Count(l, "{")
-		insideBlock -= strings.Count(l, "}")
+		insideBlock += strings.Count(l.code, "{")
+		insideBlock -= strings.Count(l.code, "}")
 		if insideBlock < 0 {
 			panic(l)
 		}
 		if was > 0 {
 			// Process a statement.
-			if strings.HasSuffix(l, ".clear();") {
-				l = l[:len(l)-len(".clear();")] + " = nil"
-			} else if m := reAssignment.FindStringSubmatch(l); m != nil {
+			if strings.HasSuffix(l.code, ".clear();") {
+				l.code = l.code[:len(l.code)-len(".clear();")] + " = nil"
+			} else if m := reAssignment.FindStringSubmatch(l.code); m != nil {
 				//Convert "foo bar = baz();" to "bar := baz();"
-				l = m[1] + m[2] + ":=" + m[3]
+				l.code = m[1] + m[2] + ":=" + m[3]
 			}
 		}
 		out = append(out, l)
@@ -282,7 +300,7 @@ func load(name string) (string, string) {
 	}
 
 	// Do a first pass to trim obvious stuff.
-	var lines []string
+	var lines []Line
 	hdr := ""
 	inHdr := true
 	for _, l := range strings.Split(string(raw), "\n") {
@@ -293,7 +311,7 @@ func load(name string) (string, string) {
 			}
 			inHdr = false
 		}
-		lines = append(lines, phase1ProcessLine(l))
+		lines = append(lines, processLine(l))
 	}
 
 	lines = commentDefines(lines)
@@ -314,10 +332,10 @@ func load(name string) (string, string) {
 	// At the very end, remove the trailing ;
 	out := ""
 	for _, l := range lines {
-		if strings.HasSuffix(l, ";") {
-			l = l[:len(l)-1]
+		if strings.HasSuffix(l.code, ";") {
+			l.code = l.code[:len(l.code)-1]
 		}
-		out += l + "\n"
+		out += l.indent + l.code + l.comment + "\n"
 	}
 	return hdr, out
 }
