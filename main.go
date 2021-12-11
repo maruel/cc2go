@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -67,6 +68,21 @@ type Line struct {
 	code string
 	// Includes the "//"
 	comment string
+
+	skip bool
+}
+
+func (l *Line) doSkip() {
+	l.comment = "//" + l.code + l.comment
+	l.code = ""
+	l.skip = true
+}
+
+func (l *Line) String() string {
+	if l.code == "" && l.comment == "" {
+		return ""
+	}
+	return l.indent + l.code + l.comment
 }
 
 // processLine processes the low hanging fruits first.
@@ -83,6 +99,9 @@ func processLine(l string) Line {
 		l = l[1:]
 	}
 	if a := strings.Index(l, "//"); a != -1 {
+		if b := strings.LastIndexFunc(l[:a], func(r rune) bool { return !unicode.IsSpace(r) }); b != -1 {
+			a = b + 1
+		}
 		out.code = l[:a]
 		out.comment = l[a:]
 	} else {
@@ -91,16 +110,13 @@ func processLine(l string) Line {
 
 	// Ignore C++ statements that are unnecessary in Go.
 	if strings.HasPrefix(out.code, "using namespace") {
-		out.comment = "// " + out.code
-		out.code = ""
+		out.doSkip()
 	}
 	if reForwardStruct.MatchString(out.code) {
-		out.comment = "// " + out.code
-		out.code = ""
+		out.doSkip()
 	}
 	if m := reStructAccess.FindStringSubmatch(out.code); m != nil {
-		out.comment = "// " + out.code
-		out.code = ""
+		out.doSkip()
 	}
 
 	// Actual code.
@@ -123,12 +139,10 @@ func commentDefines(lines []Line) []Line {
 	for _, l := range lines {
 		if strings.HasPrefix(l.code, "#") {
 			indef = strings.HasSuffix(l.code, "\\")
-			l.comment = "//" + l.code
-			l.code = ""
+			l.doSkip()
 		} else if indef {
 			indef = strings.HasSuffix(l.code, "\\")
-			l.comment = "//" + l.code
-			l.code = ""
+			l.doSkip()
 		} else {
 			indef = false
 		}
@@ -150,8 +164,7 @@ func commentExtern(lines []Line) []Line {
 			if strings.TrimSpace(l.code) == "}" {
 				inextern--
 			}
-			l.comment = "//" + l.code
-			l.code = ""
+			l.doSkip()
 		}
 		out = append(out, l)
 	}
@@ -167,6 +180,7 @@ func mergeParenthesis(lines []Line) []Line {
 	for _, l := range lines {
 		if count == 0 {
 			acc.indent = l.indent
+			acc.skip = l.skip
 		}
 		count += strings.Count(l.code, "(")
 		count -= strings.Count(l.code, ")")
@@ -180,7 +194,7 @@ func mergeParenthesis(lines []Line) []Line {
 			if count == 0 {
 				// Output the line.
 				out = append(out, acc)
-				acc = Line{indent: l.indent}
+				acc = Line{indent: l.indent, skip: l.skip}
 			} else {
 				acc.code += " "
 			}
@@ -253,9 +267,7 @@ func processFunctionDeclaration(lines []Line) []Line {
 		// need these.
 		if m := reFunc.FindStringSubmatch(l.code); m != nil {
 			if m[1] != "return" {
-				// White spaces in front.
-				l.comment = "//" + l.code
-				l.code = ""
+				l.doSkip()
 			}
 		}
 		out = append(out, l)
@@ -267,12 +279,12 @@ func processFunctionDeclaration(lines []Line) []Line {
 func fixStatements(lines []Line) []Line {
 	insideBlock := 0
 	var out []Line
-	for _, l := range lines {
+	for i, l := range lines {
 		was := insideBlock
 		insideBlock += strings.Count(l.code, "{")
 		insideBlock -= strings.Count(l.code, "}")
 		if insideBlock < 0 {
-			panic(l)
+			panic(fmt.Sprintf("%d: %s", i, l.String()))
 		}
 		if was > 0 {
 			// Process a statement.
@@ -292,12 +304,12 @@ func fixStatements(lines []Line) []Line {
 //
 // The resulting file is not syntactically valid Go but it will make manual fix
 // ups easier.
-func load(name string) (string, string) {
-	log.Printf("%s", name)
+func load(name string, keepSkip bool) (string, string) {
 	raw, err := os.ReadFile(name)
 	if err != nil {
 		return "", ""
 	}
+	log.Printf("load(%s)", name)
 
 	// Do a first pass to trim obvious stuff.
 	var lines []Line
@@ -315,8 +327,6 @@ func load(name string) (string, string) {
 	}
 
 	lines = commentDefines(lines)
-
-	// Make a second context aware pass.
 	lines = mergeParenthesis(lines)
 	lines = fixCondition(lines)
 	lines = commentExtern(lines)
@@ -329,21 +339,31 @@ func load(name string) (string, string) {
 	//Convert enum
 	//Comment out namespace
 
-	// At the very end, remove the trailing ;
+	// At the very end, remove the trailing ";".
+	// Skip consecutive empty lines.
 	out := ""
+	wasEmpty := false
 	for _, l := range lines {
+		if !keepSkip && l.skip {
+			continue
+		}
 		if strings.HasSuffix(l.code, ";") {
 			l.code = l.code[:len(l.code)-1]
 		}
-		out += l.indent + l.code + l.comment + "\n"
+		s := l.String()
+		if wasEmpty && s == "" {
+			continue
+		}
+		wasEmpty = s == ""
+		out += s + "\n"
 	}
 	return hdr, out
 }
 
 // process processes a pair of .h/.cc files.
-func process(outDir, root string) error {
-	hdr1, c1 := load(root + ".h")
-	hdr2, c2 := load(root + ".cc")
+func process(outDir, inDir, root string, keepSkip bool) error {
+	hdr1, c1 := load(filepath.Join(inDir, root+".h"), keepSkip)
+	hdr2, c2 := load(filepath.Join(inDir, root+".cc"), keepSkip)
 	out := hdr1
 	if hdr1 != hdr2 {
 		out += hdr2
@@ -381,13 +401,16 @@ func fprintf(w io.Writer, f string, v...interface{}) {
 
 func mainImpl() error {
 	v := flag.Bool("v", false, "verbose")
-	outDir := flag.String("o", "go2", "output directory")
+	inDir := flag.String("i", "src", "input directory")
+	outDir := flag.String("o", ".", "output directory")
+	keepSkip := flag.Bool("s", false, "keep skipped lines")
 	flag.Parse()
+	log.SetFlags(0)
 	if !*v {
 		log.SetOutput(ioutil.Discard)
 	}
 
-	entries, err := os.ReadDir(".")
+	entries, err := os.ReadDir(*inDir)
 	if err != nil {
 		return err
 	}
@@ -395,13 +418,20 @@ func mainImpl() error {
 	for _, e := range entries {
 		n := e.Name()
 		ext := filepath.Ext(n)
+		if ext != ".h" && ext != ".cc" {
+			continue
+		}
 		n = n[:len(n)-len(ext)]
 		if strings.HasSuffix(n, "_test") || strings.HasSuffix(n, "_perftest") || n == "test" {
 			continue
 		}
 		roots[n] = struct{}{}
 	}
-	if err := os.Mkdir(*outDir, 0o755); err != nil {
+	if _, err := os.Stat(*outDir); os.IsNotExist(err) {
+		if err := os.Mkdir(*outDir, 0o755); err != nil {
+			return err
+		}
+	} else if err != nil {
 		return err
 	}
 	files := make([]string, 0, len(roots))
@@ -410,18 +440,24 @@ func mainImpl() error {
 	}
 	sort.Strings(files)
 	for _, root := range files {
-		if err := process(*outDir, root); err != nil {
+		if err := process(*outDir, *inDir, root, *keepSkip); err != nil {
 			return err
 		}
+		break
 	}
 	if err := ioutil.WriteFile(filepath.Join(*outDir, "ginja.go"), []byte(gingaContent), 0o644); err != nil {
 		return err
 	}
-	cmd := exec.Command("go", "mod", "init", "ginga")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Dir = *outDir
-	return cmd.Run()
+	if _, err := os.Stat(filepath.Join(*outDir, "go.mod")); os.IsNotExist(err) {
+		cmd := exec.Command("go", "mod", "init", "ginga")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Dir = *outDir
+		if err = cmd.Run(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func main() {
