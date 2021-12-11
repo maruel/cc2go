@@ -24,7 +24,6 @@ var (
 
 	// e.g. "struct Foo;"
 	reForwardStruct = regexp.MustCompile(`^struct [A-Za-z]+;$`)
-	reDoubleComment = regexp.MustCompile(`^(\s*)//(.*)`)
 	// e.g. "protected:"
 	reStructAccess = regexp.MustCompile(`^(public|protected|private):$`)
 	// e.g. "void bar() const {"
@@ -61,6 +60,7 @@ func countSpaces(l string) int {
 	return i
 }
 
+// Line describes one source line.
 type Line struct {
 	original []string
 
@@ -482,7 +482,7 @@ func mainImpl() error {
 		roots[n] = struct{}{}
 	}
 	if _, err := os.Stat(*outDir); os.IsNotExist(err) {
-		if err := os.Mkdir(*outDir, 0o755); err != nil {
+		if err = os.Mkdir(*outDir, 0o755); err != nil {
 			return err
 		}
 	} else if err != nil {
