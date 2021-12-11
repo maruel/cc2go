@@ -32,6 +32,7 @@ var (
 	reStd = regexp.MustCompile(`std::`)
 	// A string.
 	reConstChar = regexp.MustCompile(`const char\s?\*`)
+	reCondition = regexp.MustCompile(`^(\s*)if\s+\(([^(]+)\)(.*)$`)
 )
 
 var asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
@@ -125,8 +126,17 @@ func commentOutForwardFunc(l string) string {
 	return l
 }
 
-func fixOnelinerCondition(lines []string) []string {
-	return lines
+func fixCondition(lines []string) []string {
+	var out []string
+	for _, l := range lines {
+		if m := reCondition.FindStringSubmatch(l); m != nil {
+			// - Remove the extra parenthesis.
+			// - Fix one liners.
+			l = m[1] + "if " + m[2] + " " + m[3]
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 // processFunctionDeclaration rewrite a function declaration to be closer to Go
@@ -160,9 +170,9 @@ func load(name string) string {
 		}
 		lines[i] = commentOutForwardFunc(l)
 	}
+	lines = fixCondition(lines)
 
 	//out = processFunctionDeclaration(out)
-	//fixOnelinerCondition(out)
 	//fixPointerReference(out)
 	//addThisPointer(out)
 	//Remove ".c_str()"
