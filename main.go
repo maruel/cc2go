@@ -5,8 +5,10 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,24 +17,29 @@ import (
 )
 
 var (
+	// Used in phase 1
+
 	// e.g. "struct Foo;"
 	reForwardStruct = regexp.MustCompile(`^struct [A-Za-z]+;$`)
-	// e.g. "void bar();" or "virtual void bar() const = 0;"
-	reForwardFunc = regexp.MustCompile(`^(\s*)(?:virtual |)([a-zA-Z]+)\s+[A-Za-z_]+\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const |)(?: = 0|);$`)
 	// e.g. "/// Foo." used for doxyge.
 	reTrippleComment = regexp.MustCompile(`^(\s*)///(.*)`)
 	reDoubleComment  = regexp.MustCompile(`^(\s*)//(.*)`)
 	// e.g. "protected:"
 	reStructAccess = regexp.MustCompile(`^(\s*)(public|protected|private):$`)
-	// e.g. "extern "C""
-	reExtern = regexp.MustCompile(`^(\s*)extern (.*)`)
 	// e.g. "void bar() const {"
 	reConstMethod = regexp.MustCompile(`^(.+)\) const {$`)
-	// Not a disease.
-	reStd = regexp.MustCompile(`std::`)
 	// A string.
 	reConstChar = regexp.MustCompile(`const char\s?\*`)
-	reCondition = regexp.MustCompile(`^(\s*)if\s+\(([^(]+)\)(.*)$`)
+
+	// Used later
+
+	// e.g. "extern "C" {"
+	reExtern = regexp.MustCompile(`^(\s*)extern (.*)`)
+
+	// e.g. "void bar() {" or "virtual void bar() const = 0;"
+	reFunc          = regexp.MustCompile(`^(\s*)(?:virtual |)([a-zA-Z]+)\s+[A-Za-z_]+\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const |)(?: = 0|);$`)
+	reSimpleWord    = regexp.MustCompile(`^[a-z]+$`)
+	reNotSimpleWord = regexp.MustCompile(`^![a-z]+$`)
 )
 
 var asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
@@ -50,16 +57,10 @@ func countSpaces(l string) int {
 // phase1ProcessLine processes the low hanging fruits first.
 func phase1ProcessLine(l string) string {
 	// Just ignore.
-	if strings.HasPrefix(l, "#") {
-		return "// " + l
-	}
 	if strings.HasPrefix(l, "using namespace") {
 		return "// " + l
 	}
 	if reForwardStruct.MatchString(l) {
-		return "// " + l
-	}
-	if reExtern.MatchString(l) {
 		return "// " + l
 	}
 	if m := reStructAccess.FindStringSubmatch(l); m != nil {
@@ -76,12 +77,56 @@ func phase1ProcessLine(l string) string {
 	}
 
 	// Actual code.
-	l = reStd.ReplaceAllString(l, "")
+	l = strings.ReplaceAll(l, "std::", "")
+	l = strings.ReplaceAll(l, "const string&", "string")
+	l = strings.ReplaceAll(l, ".c_str()", "")
+	l = strings.ReplaceAll(l, "->", ".")
+	l = strings.ReplaceAll(l, "NULL", "nil")
 	l = reConstChar.ReplaceAllString(l, "string")
 	if reConstMethod.MatchString(l) {
 		return reConstMethod.ReplaceAllString(l, "$1) {")
 	}
 	return l
+}
+
+// commentDefines handles includes and defines, including multi-lines defines.
+func commentDefines(lines []string) []string {
+	var out []string
+	indef := false
+	for _, l := range lines {
+		if strings.HasPrefix(l, "#") {
+			indef = strings.HasSuffix(l, "\\")
+			l = "//" + l
+		} else if indef {
+			indef = strings.HasSuffix(l, "\\")
+			l = "//" + l
+		} else {
+			indef = false
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+func commentExtern(lines []string) []string {
+	var out []string
+	inextern := 0
+	for _, l := range lines {
+		if m := reExtern.FindStringSubmatch(l); m != nil {
+			l = m[1] + "//" + l[len(m[1]):]
+			if strings.HasSuffix(l, "{") {
+				inextern++
+			}
+		} else if inextern > 0 {
+			if strings.TrimSpace(l) == "}" {
+				inextern--
+			}
+			c := countSpaces(l)
+			l = l[:c] + "//" + l[c:]
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 // mergeParenthesis makes all () on one line to make function declaration
@@ -112,44 +157,104 @@ func mergeParenthesis(lines []string) []string {
 	return out
 }
 
-// commentOutForwardFunc comments any forward declaration found. Go doesn't
-// need these.
-func commentOutForwardFunc(l string) string {
-	if m := reForwardFunc.FindStringSubmatch(l); m != nil {
-		if m[2] == "return" {
-			return l
-		}
-		// White spaces in front.
-		c := len(m[1])
-		return l[:c] + "//" + l[c:]
-	}
-	return l
-}
-
+// fixCondition does two things:
+//  - Remove the extra parenthesis.
+//  - Fix one liners.
 func fixCondition(lines []string) []string {
 	var out []string
+	var insertClosingBracket []string
 	for _, l := range lines {
-		if m := reCondition.FindStringSubmatch(l); m != nil {
-			// - Remove the extra parenthesis.
-			// - Fix one liners.
-			l = m[1] + "if " + m[2] + " " + m[3]
+		c := countSpaces(l)
+		m := l[c:]
+		if strings.HasPrefix(m, "if (") {
+			// There's a comment at least once so don't use HasSuffix.
+			if !strings.Contains(m, "{") {
+				// One liner.
+				l += " {"
+				insertClosingBracket = append(insertClosingBracket, l[:c])
+			}
+			// Trim the very first and very last parenthesis. There can be inside due
+			// to function calls.
+			i := strings.LastIndex(l, ")")
+			cond := l[c+4 : i]
+			// For conditions with nothing but a word, let's assume it checks for
+			// nil. It's going to be wrong often but I think it's more often right
+			// than wrong.
+			if reSimpleWord.MatchString(cond) {
+				cond += " != nil"
+			} else if reNotSimpleWord.MatchString(cond) {
+				cond = cond[1:] + " == nil"
+			} else if reSimpleWord.MatchString(strings.TrimSuffix(cond, ".empty()")) {
+				// if (foo.empty())
+				cond = "len(" + cond[:len(cond)-len(".empty()")] + ") == 0"
+			} else if reNotSimpleWord.MatchString(strings.TrimSuffix(cond, ".empty()")) {
+				// if (!foo.empty())
+				cond = "len(" + cond[1:len(cond)-len(".empty()")] + ") != 0"
+			}
+			l = l[:c] + "if " + cond + l[i+1:]
+			out = append(out, l)
+		} else if len(insertClosingBracket) != 0 {
+			// TODO(maruel): "else if"
+			out = append(out, l)
+			out = append(out, insertClosingBracket[len(insertClosingBracket)-1]+"}")
+			insertClosingBracket = insertClosingBracket[:len(insertClosingBracket)-1]
+		} else {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func fixStatements(lines []string) []string {
+	inside := 0
+	for _, l := range lines {
+		if reDoubleComment.MatchString(l) {
+			continue
+		}
+		inside += strings.Count(l, "{")
+		inside -= strings.Count(l, "}")
+		if inside < 0 {
+			panic(l)
+		}
+		if inside > 0 {
+			// Process a statement.
+		}
+	}
+	return lines
+	//Convert ".clear()" to " = nil"
+	//Convert "foo bar = baz()" to "bar = baz()"
+}
+
+// processFunctionDeclaration rewrite a function declaration to be closer to Go
+// style.
+func processFunctionDeclaration(lines []string) []string {
+	// Convert method
+	// Remove const
+	// Rewrite const string& to string
+	// Process argument type
+	var out []string
+	for _, l := range lines {
+		if reDoubleComment.MatchString(l) {
+			out = append(out, l)
+			continue
+		}
+		// TODO(maruel): Constructor, destructor, method.
+		// commentOutForwardFunc comments any forward declaration found. Go doesn't
+		// need these.
+		if m := reFunc.FindStringSubmatch(l); m != nil {
+			if m[2] != "return" {
+				// White spaces in front.
+				c := len(m[1])
+				l = l[:c] + "//" + l[c:]
+			}
 		}
 		out = append(out, l)
 	}
 	return out
 }
 
-// processFunctionDeclaration rewrite a function declaration to be closer to Go
-// style.
-func processFunctionDeclaration(l string) string {
-	// Convert method
-	// Remove const
-	// Rewrite const string& to string
-	// Process argument type
-	return ""
-}
-
 func load(name string) string {
+	log.Printf("%s", name)
 	raw, err := os.ReadFile(name)
 	if err != nil {
 		return ""
@@ -161,25 +266,17 @@ func load(name string) string {
 		lines[i] = phase1ProcessLine(l)
 	}
 
+	lines = commentDefines(lines)
+
 	// Make a second context aware pass.
 	lines = mergeParenthesis(lines)
-
-	for i, l := range lines {
-		if reDoubleComment.MatchString(l) {
-			continue
-		}
-		lines[i] = commentOutForwardFunc(l)
-	}
 	lines = fixCondition(lines)
+	lines = fixStatements(lines)
+	lines = commentExtern(lines)
+	lines = processFunctionDeclaration(lines)
 
-	//out = processFunctionDeclaration(out)
-	//fixPointerReference(out)
 	//addThisPointer(out)
-	//Remove ".c_str()"
-	//Convert ".clear()" to " = nil"
-	//Convert ".empty()" to " == nil"
 	//Comment assert()
-	//Convert "foo bar = baz()" to "bar = baz()"
 	//Convert "set<foo>" to "map[foo]struct{}"
 	//Convert "vector<foo>" to "[]foo"
 	//Convert enum
@@ -229,6 +326,11 @@ func fprintf(w io.Writer, fmt string, v...interface{}) {
 `
 
 func mainImpl() error {
+	v := flag.Bool("v", false, "verbose")
+	flag.Parse()
+	if !*v {
+		log.SetOutput(ioutil.Discard)
+	}
 	outDir := "go2"
 	entries, err := os.ReadDir(".")
 	if err != nil {
