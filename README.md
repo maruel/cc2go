@@ -8,3 +8,4 @@ What works:
 - Add missing curly brackets for one liner condition if / else.
 - Comment out most forward declaration.
 - Update function argument and return value order.
+- Method receiver.

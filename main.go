@@ -42,9 +42,11 @@ var (
 	reConstructorDeclaration = regexp.MustCompile(`^([A-Za-z_0-9]+)\s?\([a-zA-Z *,=<>_:&\[\]]*\);$`)
 	// 1 is return type, 2 is name, 3 is args, 4 is brackets
 	reFuncImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
-	reStructDefinition   = regexp.MustCompile(`^struct ([A-Za-z]+)(?:\s*:[a-zA-Z, ]+|)\s*{$`)
-	reSimpleWord         = regexp.MustCompile(`^[a-z]+$`)
-	reNotSimpleWord      = regexp.MustCompile(`^![a-z]+$`)
+	// 1 is return type, 2 is class, 3 is name, 4 is args, 5 is brackets
+	reMethodImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)::([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
+	reStructDefinition     = regexp.MustCompile(`^struct ([A-Za-z]+)(?:\s*:[a-zA-Z, ]+|)\s*{$`)
+	reSimpleWord           = regexp.MustCompile(`^[a-z]+$`)
+	reNotSimpleWord        = regexp.MustCompile(`^![a-z]+$`)
 
 	// e.g. "foo bar = baz();"
 	reAssignment = regexp.MustCompile(`^(\s*)[a-zA-Z<>\*:&]+ ([a-zA-Z_]+ )=( .+;)$`)
@@ -309,9 +311,9 @@ func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 }
 
 // processArgs process the arguments in a function declaration.
-func processArgs(l string) string {
+func processArgs(l string) (string, error) {
 	if l == "" {
-		return l
+		return l, nil
 	}
 
 	// Handling templates requires walking manually to count the angle brackets.
@@ -346,18 +348,24 @@ func processArgs(l string) string {
 	}
 
 	// Now that they are properly split, process the types.
+	var err error
 	for i, a := range args {
-		args[i] = processArg(a)
+		var err1 error
+		if args[i], err1 = processArg(a); err == nil {
+			err = err1
+		}
 	}
-	return strings.Join(args, ", ")
+	return strings.Join(args, ", "), err
 }
 
 // processArg process one argument string in a function declaration. It's one
 // of the most tedious thing to do when converting code manually.
-func processArg(a string) string {
+func processArg(a string) (string, error) {
 	c := strings.LastIndex(a, " ")
 	if c == -1 {
-		panic(a)
+		// There's a type with no name. Return it as-is
+		return a, nil
+		//return "", fmt.Errorf("failed to process argument %q", a)
 	}
 	t := a[:c]
 	n := a[c+1:]
@@ -389,7 +397,7 @@ func processArg(a string) string {
 		// TODO(maruel): Convert "set<foo>" to "map[foo]struct{}"
 	}
 	*/
-	return n + " " + t
+	return n + " " + t, nil
 }
 
 // processFunctionImplementation handles function implementations.
@@ -418,8 +426,10 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 			if m[1] == "void" {
 				m[1] = ""
 			}
-			//log.Printf("%s", l.code)
-			args := processArgs(m[3])
+			args, err := processArgs(m[3])
+			if err != nil {
+				panic(fmt.Sprintf("%s: %s", l.code, err))
+			}
 			if m[1] == "" {
 				l.code = "func " + m[2] + "(" + args + ") " + m[4]
 			} else {
@@ -429,6 +439,34 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 			if d := doc[name]; len(d) != 0 {
 				// Insert the doc there.
 				out = append(out, d...)
+			}
+		} else if m := reMethodImplementation.FindStringSubmatch(l.code); m != nil {
+			// 1 is return type, 2 is class, 3 is name, 4 is args, 5 is brackets
+			if m[1] == "if" {
+				// It's annoying that this triggers, just shrug it.
+				out = append(out, l)
+				continue
+			}
+			if m[1] == "void" {
+				m[1] = ""
+			}
+			p := strings.ToLower(m[2][:1])
+			args, err := processArgs(m[4])
+			if err != nil {
+				panic(fmt.Sprintf("%s: %s", l.code, err))
+			}
+			if m[1] == "" {
+				l.code = "func (" + p + " *" + m[2] + ") " + m[3] + "(" + args + ") " + m[5]
+			} else {
+				l.code = "func (" + p + " *" + m[2] + ") " + m[3] + "(" + args + ") " + m[1] + " " + m[5]
+			}
+			name := strings.ReplaceAll(m[2], "::", ".")
+			if d := doc[name]; len(d) != 0 {
+				// Insert the doc there, updating the indentation.
+				for _, x := range d {
+					x.indent = l.indent
+					out = append(out, x)
+				}
 			}
 		}
 		out = append(out, l)
