@@ -301,10 +301,7 @@ func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 				l.doSkip()
 				// Associate the function description if available.
 				for i := len(out) - 1; i >= 0 && out[i].code == "" && out[i].comment != ""; i-- {
-					n := m[1]
-					if structName != "" {
-						n = structName + "." + n
-					}
+					n := getID(structName, m[1])
 					doc[n] = append([]Line{out[i]}, doc[n]...)
 					out[i].skip = true
 				}
@@ -320,10 +317,7 @@ func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 			l.doSkip()
 			// Associate the function description if available.
 			for i := len(out) - 1; i >= 0 && out[i].code == "" && out[i].comment != ""; i-- {
-				n := m[2]
-				if structName != "" {
-					n = structName + "." + n
-				}
+				n := getID(structName, m[2])
 				doc[n] = append([]Line{out[i]}, doc[n]...)
 				out[i].skip = true
 			}
@@ -331,6 +325,14 @@ func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 		out = append(out, l)
 	}
 	return out
+}
+
+// getID returns the key for use in the doc map.
+func getID(structName, funcName string) string {
+	if structName == "" {
+		return funcName
+	}
+	return structName + "." + funcName
 }
 
 //
@@ -422,13 +424,6 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 		out = append(out, l)
 	}
 	return out
-}
-
-func getID(structName, funcName string) string {
-	if structName == "" {
-		return funcName
-	}
-	return structName + "." + funcName
 }
 
 func rewriteFunc(structName, funcName, args, ret, rest string) string {
@@ -542,36 +537,56 @@ func processArg(a string) (string, error) {
 //  - Remove the extra parenthesis.
 func fixCondition(lines []Line) []Line {
 	var out []Line
-	var insertClosingBracket []string
-	for i, l := range lines {
-		shouldClose := len(insertClosingBracket) != 0
-		// Start of a condition.
-		if strings.HasPrefix(l.code, "if (") || strings.HasPrefix(l.code, "} else if (") {
-			if !strings.HasSuffix(l.code, "{") {
-				// One liner.
-				l.code += " {"
-				insertClosingBracket = append(insertClosingBracket, l.indent)
+	for i := 0; i < len(lines); i++ {
+		l := lines[i]
+		// Look for functions. It is easy now that the functions start with
+		// "func " and that they are on one line.
+		// Include hack for TEST_F() googletest.
+		if strings.HasPrefix(l.code, "func ") || strings.HasPrefix(l.code, "TEST_F(") {
+			// Find the end, and process this part only.
+			b := strings.Count(l.code, "{") - strings.Count(l.code, "}")
+			end := i
+			for ; b > 0 && end < len(lines); end++ {
+				b += strings.Count(lines[end].code, "{") - strings.Count(lines[end].code, "}")
 			}
-			// Trim the very first and very last parenthesis. There can be inside due
-			// to function calls.
-			j := strings.LastIndex(l.code, ")")
-			c := strings.Index(l.code, "if (")
-			l.code = l.code[:c] + "if " + cleanCond(l.code[4:j]) + l.code[j+1:]
-		} else if l.code == "} else" {
-			// One liner else.
-			l.code += " {"
-			insertClosingBracket = append(insertClosingBracket, l.indent)
-		}
-		out = append(out, l)
-		if shouldClose {
-			// Check if the next line has a "else", if so then add the bracket there.
-			if i < len(lines)-1 && strings.HasPrefix(lines[i+1].code, "else") {
-				lines[i+1].code = "} " + lines[i+1].code
-			} else {
-				out = append(out, Line{indent: insertClosingBracket[len(insertClosingBracket)-1], code: "}"})
+			end -= 2
+			// Append the function.
+			out = append(out, l)
+			if i+1 < end {
+				/*
+					// Everything within.
+					for x := i + 1; x < end; x++ {
+						log.Printf("FUNC IS: %s\n", lines[x].String())
+					}
+				*/
+				more := fixConditionFunc(lines[i+1 : end])
+				/*
+					for x := range more {
+						log.Printf("RESULT : %s\n", more[x].String())
+					}
+				*/
+				out = append(out, more...)
+				// And the trailing line, if applicable.
+				out = append(out, lines[end])
+				i = end
 			}
-			insertClosingBracket = insertClosingBracket[:len(insertClosingBracket)-1]
+		} else {
+			out = append(out, l)
 		}
+	}
+	return out
+}
+
+// fixConditionFunc handles one function.
+func fixConditionFunc(lines []Line) []Line {
+	log.Printf("fixConditionFunc(%s)", lines[0].String())
+	var out []Line
+	for i := 0; i < len(lines); {
+		// Process "one line" at a time. The line can read multiple lines if it's a
+		// oneliner condition.
+		j, more := fixConditionOneline(lines[i:])
+		i += j
+		out = append(out, more...)
 	}
 	return out
 }
@@ -581,7 +596,19 @@ var (
 	reNotSimpleWord = regexp.MustCompile(`^![a-z]+$`)
 )
 
-func cleanCond(cond string) string {
+// cleanCond takes the condition and returns the cleaned version and the rest.
+func cleanCond(cond string) (string, string) {
+	i := 0
+	count := 1
+	for ; count != 0 && i < len(cond); i++ {
+		if cond[i] == '(' {
+			count++
+		} else if cond[i] == ')' {
+			count--
+		}
+	}
+	rest := strings.TrimSpace(cond[i:])
+	cond = cond[:i-1]
 	// For conditions with nothing but a word, let's assume it checks for
 	// nil. It's going to be wrong often but I think it's more often right
 	// than wrong.
@@ -596,7 +623,82 @@ func cleanCond(cond string) string {
 		// if (!foo.empty())
 		cond = "len(" + cond[1:len(cond)-len(".empty()")] + ") != 0"
 	}
-	return cond
+	log.Printf("cleanCond() = %q, %q", cond, rest)
+	return cond, rest
+}
+
+// fixConditionOneline handles one line or more lines if a one liner is found.
+//
+// It returns the number of lines consumed and the corresponding output.
+func fixConditionOneline(lines []Line) (int, []Line) {
+	log.Printf("fixConditionOneline(%s)", lines[0].String())
+	l := lines[0]
+	if strings.HasPrefix(l.code, "if (") {
+		// Trim the very first and very last parenthesis. There can be inside due
+		// to function calls.
+		cond, rest := cleanCond(l.code[len("if ("):])
+		l.code = "if " + cond + " {"
+
+		// One liner?
+		if rest != "{" {
+			j := 0
+			var more []Line
+			if rest == "" {
+				j, more = fixConditionOneliner(l.indent, lines[1:])
+			} else {
+				// Inject rest as a statement.
+				j, more = fixConditionOneliner(l.indent, append([]Line{{indent: l.indent + "\t", code: rest}}, lines[1:]...))
+			}
+			return 1 + j, append([]Line{l}, more...)
+		}
+
+	} else if strings.HasPrefix(l.code, "} else if (") {
+		// Trim the very first and very last parenthesis. There can be inside due
+		// to function calls.
+		cond, rest := cleanCond(l.code[len("} else if ("):])
+		l.code = "} else if " + cond + " {"
+
+		// One liner?
+		if rest != "{" {
+			j := 0
+			var more []Line
+			if rest == "" {
+				j, more = fixConditionOneliner(l.indent, lines[1:])
+			} else {
+				// Inject rest as a statement.
+				j, more = fixConditionOneliner(l.indent, append([]Line{{indent: l.indent + "\t", code: rest}}, lines[1:]...))
+			}
+			return 1 + j, append([]Line{l}, more...)
+		}
+
+	} else if strings.HasPrefix(l.code, "} else") {
+		// One liner?
+		if !strings.HasSuffix(l.code, "{") {
+			l.code += " {"
+			j, more := fixConditionOneliner(l.indent, lines[1:])
+			return 1 + j, append([]Line{l}, more...)
+		}
+	}
+
+	return 1, []Line{l}
+}
+
+// fixConditionOneliner fixes a one liner.
+//
+// One liners can be embedded into each other, which makes it a bit tricky to
+// process.
+func fixConditionOneliner(indent string, lines []Line) (int, []Line) {
+	log.Printf("fixConditionOneliner(%s)", lines[0].String())
+	i, out := fixConditionOneline(lines)
+
+	// Special case else.
+	if i < len(lines) && strings.HasPrefix(lines[i].code, "else") {
+		l := lines[i]
+		l.code = "} " + l.code
+		j, more := fixConditionOneline(append([]Line{l}, lines[i+1:]...))
+		return i + j, append(out, more...)
+	}
+	return i, append(out, Line{indent: indent, code: "}"})
 }
 
 //
