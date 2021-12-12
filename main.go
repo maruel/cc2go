@@ -308,33 +308,88 @@ func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 	return out
 }
 
+// processArgs process the arguments in a function declaration.
 func processArgs(l string) string {
 	if l == "" {
 		return l
 	}
-	return l
-	// TODO(maruel): Handle templates.
-	/*
-		out := ""
-		for _, a := range strings.Split(l, ", ") {
-			c := strings.LastIndex(a, " ")
-			if c == -1 {
-				fmt.Fprintf(os.Stderr, "ERROR: processArgs %s\n", l)
+
+	// Handling templates requires walking manually to count the angle brackets.
+	var args []string
+	ab := 0
+	acc := ""
+	for _, r := range l {
+		switch r {
+		case '<':
+			ab++
+			acc += string(r)
+		case '>':
+			ab--
+			acc += string(r)
+		case ',':
+			if ab == 0 {
+				args = append(args, acc)
+				acc = ""
+			} else {
+				acc += string(r)
 			}
-			t := a[:c]
-			n := a[c+1:]
-			star := strings.HasSuffix(t, "*")
-			if star {
-				t = t[:len(t)-1]
-				n = "*" + n
+		case ' ':
+			if len(acc) != 0 {
+				acc += string(r)
 			}
-			if out != "" {
-				out += ", "
-			}
-			out += n + " " + t
+		default:
+			acc += string(r)
 		}
-		return out
+	}
+	if acc != "" {
+		args = append(args, acc)
+	}
+
+	// Now that they are properly split, process the types.
+	for i, a := range args {
+		args[i] = processArg(a)
+	}
+	return strings.Join(args, ", ")
+}
+
+// processArg process one argument string in a function declaration. It's one
+// of the most tedious thing to do when converting code manually.
+func processArg(a string) string {
+	c := strings.LastIndex(a, " ")
+	if c == -1 {
+		panic(a)
+	}
+	t := a[:c]
+	n := a[c+1:]
+	for strings.HasSuffix(t, "*") {
+		t = "*" + t[:len(t)-1]
+	}
+	for strings.HasPrefix(n, "*") {
+		n = n[1:]
+		t = "*" + t
+	}
+	if strings.HasSuffix(n, "[]") {
+		n = n[:len(n)-2]
+		t = "[]" + t
+	}
+	if strings.HasPrefix(t, "const ") {
+		t = t[len("const "):]
+	}
+	if strings.HasSuffix(t, "&") {
+		t = "*" + strings.TrimSpace(t[:len(t)-1])
+	}
+
+	/* TODO(maruel): Skip for now because it doesn't behave well with pointers.
+	for found := true; found; found = false {
+		// Convert "vector<foo>" to "[]foo".
+		if c := strings.Index(t, "vector<"); c != -1 {
+			t = t[:c] + "[]" + t[c+len("vector<"):len(t)-1]
+			found = true
+		}
+		// TODO(maruel): Convert "set<foo>" to "map[foo]struct{}"
+	}
 	*/
+	return n + " " + t
 }
 
 // processFunctionImplementation handles function implementations.
@@ -450,8 +505,6 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = fixStatements(lines)
 
 	//Comment assert()
-	//Convert "set<foo>" to "map[foo]struct{}"
-	//Convert "vector<foo>" to "[]foo"
 	//Convert enum
 	//Comment out namespace
 
