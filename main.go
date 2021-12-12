@@ -380,9 +380,7 @@ func processArg(a string) (string, error) {
 		n = n[:len(n)-2]
 		t = "[]" + t
 	}
-	if strings.HasPrefix(t, "const ") {
-		t = t[len("const "):]
-	}
+	t = strings.TrimPrefix(t, "const ")
 	if strings.HasSuffix(t, "&") {
 		t = "*" + strings.TrimSpace(t[:len(t)-1])
 	}
@@ -479,10 +477,8 @@ func fixStatements(lines []Line) []Line {
 	// TODO(maruel): Ensure the code cannot be inside nested functions. The
 	// code base we process do not use this.
 
-	// TODO(maruel): Constructor, destructor, method.
-	// Convert method
+	// TODO(maruel): Constructor, destructor.
 	// Remove const
-	// Process argument type
 	//addThisPointer(out)
 	insideBlock := 0
 	var out []Line
