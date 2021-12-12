@@ -230,6 +230,40 @@ func foo() {
 }
 `,
 		},
+		{
+			`
+func foo() {
+	if (bar == '}') baz();
+}
+`,
+			`
+func foo() {
+	if bar == '}' {
+		baz();
+	}
+}
+`,
+		},
+		{
+			`
+func foo() {
+	if (bar == ' ') baz();
+	{
+		continue;
+	}
+}
+`,
+			`
+func foo() {
+	if bar == ' ' {
+		baz();
+	}
+	{
+		continue;
+	}
+}
+`,
+		},
 	}
 	for i, l := range data {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {

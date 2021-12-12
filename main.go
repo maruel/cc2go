@@ -172,6 +172,30 @@ func commentExtern(lines []Line) []Line {
 
 //
 
+// countBrackets counts { (+1) and } (-1) and returns the delta. It ignores
+// anything within parenthesis.
+func countBrackets(l string) int {
+	parenthesis := 0
+	count := 0
+	for _, r := range l {
+		if parenthesis <= 0 {
+			switch r {
+			case '{':
+				count++
+			case '}':
+				count--
+			}
+		}
+		switch r {
+		case '(':
+			parenthesis++
+		case ')':
+			parenthesis--
+		}
+	}
+	return count
+}
+
 // commentNamespace comment out "namespace foo {".
 //
 // Running it before processFunctionImplementation makes the function easier to
@@ -181,8 +205,7 @@ func commentNamespace(lines []Line) []Line {
 	brackets := 0
 	inNamespace := false
 	for _, l := range lines {
-		brackets += strings.Count(l.code, "{")
-		brackets -= strings.Count(l.code, "}")
+		brackets += countBrackets(l.code)
 		if brackets == 1 && !inNamespace {
 			if strings.HasPrefix(l.code, "namespace") && strings.HasSuffix(l.code, "{") {
 				l.doSkip()
@@ -284,8 +307,7 @@ func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 	structName := ""
 	brackets := 0
 	for _, l := range lines {
-		brackets += strings.Count(l.code, "{")
-		brackets -= strings.Count(l.code, "}")
+		brackets += countBrackets(l.code)
 		if brackets == 1 {
 			if m := reGoStruct.FindStringSubmatch(l.code); m != nil {
 				structName = m[1]
@@ -354,8 +376,7 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 	funcName := ""
 	structName := ""
 	for _, l := range lines {
-		brackets += strings.Count(l.code, "{")
-		brackets -= strings.Count(l.code, "}")
+		brackets += countBrackets(l.code)
 		if brackets == 1 {
 			if m := reGoStruct.FindStringSubmatch(l.code); m != nil {
 				structName = m[1]
@@ -544,10 +565,10 @@ func fixCondition(lines []Line) []Line {
 		// Include hack for TEST_F() googletest.
 		if strings.HasPrefix(l.code, "func ") || strings.HasPrefix(l.code, "TEST_F(") {
 			// Find the end, and process this part only.
-			b := strings.Count(l.code, "{") - strings.Count(l.code, "}")
+			b := countBrackets(l.code)
 			end := i
 			for ; b > 0 && end < len(lines); end++ {
-				b += strings.Count(lines[end].code, "{") - strings.Count(lines[end].code, "}")
+				b += countBrackets(lines[end].code)
 			}
 			end -= 2
 			// Append the function.
@@ -645,11 +666,12 @@ func fixConditionOneline(lines []Line) (int, []Line) {
 			var more []Line
 			if rest == "" {
 				j, more = fixConditionOneliner(l.indent, lines[1:], false)
+				j++
 			} else {
 				// Inject rest as a statement.
 				j, more = fixConditionOneliner(l.indent, append([]Line{{indent: l.indent + "\t", code: rest}}, lines[1:]...), false)
 			}
-			return 1 + j, append([]Line{l}, more...)
+			return j, append([]Line{l}, more...)
 		}
 
 	} else if strings.HasPrefix(l.code, "} else if (") {
@@ -664,11 +686,12 @@ func fixConditionOneline(lines []Line) (int, []Line) {
 			var more []Line
 			if rest == "" {
 				j, more = fixConditionOneliner(l.indent, lines[1:], false)
+				j++
 			} else {
 				// Inject rest as a statement.
 				j, more = fixConditionOneliner(l.indent, append([]Line{{indent: l.indent + "\t", code: rest}}, lines[1:]...), false)
 			}
-			return 1 + j, append([]Line{l}, more...)
+			return j, append([]Line{l}, more...)
 		}
 
 	} else if strings.HasPrefix(l.code, "} else") {
@@ -725,8 +748,7 @@ func fixStatements(lines []Line) []Line {
 	var out []Line
 	for i, l := range lines {
 		was := insideBlock
-		insideBlock += strings.Count(l.code, "{")
-		insideBlock -= strings.Count(l.code, "}")
+		insideBlock += countBrackets(l.code)
 		if insideBlock < 0 {
 			fmt.Fprintf(os.Stderr, "ERROR fixStatements: %d: %s\n", i, l.String())
 		}
