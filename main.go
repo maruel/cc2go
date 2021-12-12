@@ -278,7 +278,7 @@ var (
 // processFunctionDeclaration comments out forward declarations, grabbing
 // docstring along the way.
 //
-// Go doesn't need forward declaration.
+// Go doesn't need forward declaration so comment them all.
 func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 	var out []Line
 	structName := ""
@@ -310,6 +310,7 @@ func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 				}
 			}
 		}
+		// It can both be a function if brackets == 0 or a method if brackets > 1.
 		if m := reFuncDeclaration.FindStringSubmatch(l.code); m != nil {
 			if m[1] == "return" {
 				// It's super annoying that "return Foo();" triggers but there's
@@ -350,10 +351,18 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 	brackets := 0
 	funcName := ""
 	structName := ""
-	receiver := ""
 	for _, l := range lines {
 		brackets += strings.Count(l.code, "{")
 		brackets -= strings.Count(l.code, "}")
+		if brackets == 1 {
+			if m := reGoStruct.FindStringSubmatch(l.code); m != nil {
+				structName = m[1]
+			}
+		}
+		if brackets == 0 {
+			structName = ""
+		}
+
 		if m := reFuncImplementation.FindStringSubmatch(l.code); m != nil {
 			// 1 is return type, 2 is name, 3 is args, 4 is brackets
 			if m[1] == "if" {
@@ -371,21 +380,19 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 				m[1] = ""
 			}
 			funcName = m[2]
-			structName = ""
-			receiver = ""
 			args, err := processArgs(m[3])
 			if err != nil {
 				panic(fmt.Sprintf("%s: %s", l.code, err))
 			}
-			if m[1] == "" {
-				l.code = "func " + funcName + "(" + args + ") " + m[4]
-			} else {
-				l.code = "func " + funcName + "(" + args + ") " + m[1] + " " + m[4]
-			}
-			name := strings.ReplaceAll(m[2], "::", ".")
-			if d := doc[name]; len(d) != 0 {
-				// Insert the doc there.
-				out = append(out, d...)
+			// TODO(maruel): if structName != "", then move the function outside of
+			// the struct.
+			l.code = rewriteFunc(structName, funcName, args, m[1], m[4])
+			if d := doc[getID(structName, funcName)]; len(d) != 0 {
+				// Insert the doc there, updating the indentation.
+				for _, x := range d {
+					x.indent = l.indent
+					out = append(out, x)
+				}
 			}
 		} else if m := reMethodImplementation.FindStringSubmatch(l.code); m != nil {
 			// 1 is return type, 2 is class, 3 is name, 4 is args, 5 is brackets
@@ -399,18 +406,12 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 			}
 			structName = m[2]
 			funcName = m[3]
-			receiver = strings.ToLower(m[2][:1])
 			args, err := processArgs(m[4])
 			if err != nil {
 				panic(fmt.Sprintf("%s: %s", l.code, err))
 			}
-			if m[1] == "" {
-				l.code = "func (" + receiver + " *" + structName + ") " + funcName + "(" + args + ") " + m[5]
-			} else {
-				l.code = "func (" + receiver + " *" + structName + ") " + funcName + "(" + args + ") " + m[1] + " " + m[5]
-			}
-			name := strings.ReplaceAll(m[2], "::", ".")
-			if d := doc[name]; len(d) != 0 {
+			l.code = rewriteFunc(structName, funcName, args, m[1], m[5])
+			if d := doc[getID(structName, funcName)]; len(d) != 0 {
 				// Insert the doc there, updating the indentation.
 				for _, x := range d {
 					x.indent = l.indent
@@ -421,6 +422,27 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 		out = append(out, l)
 	}
 	return out
+}
+
+func getID(structName, funcName string) string {
+	if structName == "" {
+		return funcName
+	}
+	return structName + "." + funcName
+}
+
+func rewriteFunc(structName, funcName, args, ret, rest string) string {
+	if structName == "" {
+		if ret == "" {
+			return "func " + funcName + "(" + args + ") " + rest
+		}
+		return "func " + funcName + "(" + args + ") " + ret + " " + rest
+	}
+	receiver := strings.ToLower(structName[:1])
+	if ret == "" {
+		return "func (" + receiver + " *" + structName + ") " + funcName + "(" + args + ") " + rest
+	}
+	return "func (" + receiver + " *" + structName + ") " + funcName + "(" + args + ") " + ret + " " + rest
 }
 
 // processArgs process the arguments in a function declaration.
