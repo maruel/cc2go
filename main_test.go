@@ -5,6 +5,7 @@
 package main
 
 import (
+	"log"
 	"strconv"
 	"strings"
 	"testing"
@@ -161,6 +162,56 @@ func foo() {
 			baz1();
 		else
 			baz2();
+}
+`,
+			`
+func foo() {
+	if bar() {
+		if baz() {
+			baz1();
+		} else {
+			baz2();
+		}
+	}
+}
+`,
+		},
+		{
+			`
+func foo() {
+	if bar() {
+		if baz() {
+			baz1();
+		} else {
+			baz2();
+		}
+	} else {
+		bar2();
+	}
+}
+`,
+			`
+func foo() {
+	if bar() {
+		if baz() {
+			baz1();
+		} else {
+			baz2();
+		}
+	} else {
+		bar2();
+	}
+}
+`,
+		},
+		{
+			`
+func foo() {
+	if (bar())
+		if (baz())
+			baz1();
+		else
+			baz2();
 	else
 		bar2();
 }
@@ -201,4 +252,8 @@ func foo() {
 			}
 		})
 	}
+}
+
+func init() {
+	log.SetFlags(0)
 }

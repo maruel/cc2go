@@ -579,7 +579,7 @@ func fixCondition(lines []Line) []Line {
 
 // fixConditionFunc handles one function.
 func fixConditionFunc(lines []Line) []Line {
-	log.Printf("fixConditionFunc(%s)", lines[0].String())
+	//log.Printf("fixConditionFunc(%s)", lines[0].String())
 	var out []Line
 	for i := 0; i < len(lines); {
 		// Process "one line" at a time. The line can read multiple lines if it's a
@@ -623,7 +623,7 @@ func cleanCond(cond string) (string, string) {
 		// if (!foo.empty())
 		cond = "len(" + cond[1:len(cond)-len(".empty()")] + ") != 0"
 	}
-	log.Printf("cleanCond() = %q, %q", cond, rest)
+	//log.Printf("cleanCond() = %q, %q", cond, rest)
 	return cond, rest
 }
 
@@ -631,7 +631,7 @@ func cleanCond(cond string) (string, string) {
 //
 // It returns the number of lines consumed and the corresponding output.
 func fixConditionOneline(lines []Line) (int, []Line) {
-	log.Printf("fixConditionOneline(%s)", lines[0].String())
+	//log.Printf("fixConditionOneline(%s)", lines[0].String())
 	l := lines[0]
 	if strings.HasPrefix(l.code, "if (") {
 		// Trim the very first and very last parenthesis. There can be inside due
@@ -644,10 +644,10 @@ func fixConditionOneline(lines []Line) (int, []Line) {
 			j := 0
 			var more []Line
 			if rest == "" {
-				j, more = fixConditionOneliner(l.indent, lines[1:])
+				j, more = fixConditionOneliner(l.indent, lines[1:], false)
 			} else {
 				// Inject rest as a statement.
-				j, more = fixConditionOneliner(l.indent, append([]Line{{indent: l.indent + "\t", code: rest}}, lines[1:]...))
+				j, more = fixConditionOneliner(l.indent, append([]Line{{indent: l.indent + "\t", code: rest}}, lines[1:]...), false)
 			}
 			return 1 + j, append([]Line{l}, more...)
 		}
@@ -663,10 +663,10 @@ func fixConditionOneline(lines []Line) (int, []Line) {
 			j := 0
 			var more []Line
 			if rest == "" {
-				j, more = fixConditionOneliner(l.indent, lines[1:])
+				j, more = fixConditionOneliner(l.indent, lines[1:], false)
 			} else {
 				// Inject rest as a statement.
-				j, more = fixConditionOneliner(l.indent, append([]Line{{indent: l.indent + "\t", code: rest}}, lines[1:]...))
+				j, more = fixConditionOneliner(l.indent, append([]Line{{indent: l.indent + "\t", code: rest}}, lines[1:]...), false)
 			}
 			return 1 + j, append([]Line{l}, more...)
 		}
@@ -675,7 +675,7 @@ func fixConditionOneline(lines []Line) (int, []Line) {
 		// One liner?
 		if !strings.HasSuffix(l.code, "{") {
 			l.code += " {"
-			j, more := fixConditionOneliner(l.indent, lines[1:])
+			j, more := fixConditionOneliner(l.indent, lines[1:], true)
 			return 1 + j, append([]Line{l}, more...)
 		}
 	}
@@ -687,12 +687,12 @@ func fixConditionOneline(lines []Line) (int, []Line) {
 //
 // One liners can be embedded into each other, which makes it a bit tricky to
 // process.
-func fixConditionOneliner(indent string, lines []Line) (int, []Line) {
-	log.Printf("fixConditionOneliner(%s)", lines[0].String())
+func fixConditionOneliner(indent string, lines []Line, isElse bool) (int, []Line) {
+	//log.Printf("fixConditionOneliner(%s)", lines[0].String())
 	i, out := fixConditionOneline(lines)
 
-	// Special case else.
-	if i < len(lines) && strings.HasPrefix(lines[i].code, "else") {
+	// Special case else, but only if it was a if.
+	if !isElse && i < len(lines) && strings.HasPrefix(lines[i].code, "else") {
 		l := lines[i]
 		l.code = "} " + l.code
 		j, more := fixConditionOneline(append([]Line{l}, lines[i+1:]...))
