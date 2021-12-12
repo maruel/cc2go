@@ -19,53 +19,6 @@ import (
 	"unicode"
 )
 
-var (
-	// Used in phase 1
-
-	// e.g. "struct Foo;"
-	reForwardStruct = regexp.MustCompile(`^struct [A-Za-z]+;$`)
-	// e.g. "protected:"
-	reStructAccess = regexp.MustCompile(`^(public|protected|private):$`)
-	// e.g. "void bar() const {"
-	reConstMethod = regexp.MustCompile(`^(.+)\) const {$`)
-	// A string.
-	reConstChar = regexp.MustCompile(`const char\s?\*`)
-
-	// Used later
-
-	// e.g. "extern "C" {"
-	reExtern = regexp.MustCompile(`^(\s*)extern (.*)`)
-
-	// e.g. "void bar();" or "virtual void bar() const = 0;"
-	// 1 is return type, 2 is name.
-	reFuncDeclaration        = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const|)\s*(?:= 0|)\s*;$`)
-	reConstructorDeclaration = regexp.MustCompile(`^([A-Za-z_0-9]+)\s?\([a-zA-Z *,=<>_:&\[\]]*\);$`)
-	// 1 is return type, 2 is name, 3 is args, 4 is brackets
-	reFuncImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
-	// 1 is return type, 2 is class, 3 is name, 4 is args, 5 is brackets
-	reMethodImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)::([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
-	reStructDefinition     = regexp.MustCompile(`^struct ([A-Za-z]+)(.+)$`)
-	reSimpleWord           = regexp.MustCompile(`^[a-z]+$`)
-	reNotSimpleWord        = regexp.MustCompile(`^![a-z]+$`)
-
-	reGoStruct = regexp.MustCompile(`^type ([a-zA-Z]+) struct {$`)
-
-	// e.g. "foo bar = baz();"
-	reAssignment = regexp.MustCompile(`^(\s*)[a-zA-Z<>\*:&]+ ([a-zA-Z_]+ )=( .+;)$`)
-)
-
-var asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
-
-func countSpaces(l string) int {
-	i := 0
-	for ; i < len(l); i++ {
-		if asciiSpace[l[i]] == 0 {
-			break
-		}
-	}
-	return i
-}
-
 // Line describes one source line.
 type Line struct {
 	original []string
@@ -93,6 +46,33 @@ func (l *Line) String() string {
 		return ""
 	}
 	return l.indent + l.code + l.comment
+}
+
+// Phase 1
+
+var (
+	// Used in phase 1
+
+	// e.g. "struct Foo;"
+	reForwardStruct = regexp.MustCompile(`^struct [A-Za-z]+;$`)
+	// e.g. "protected:"
+	reStructAccess = regexp.MustCompile(`^(public|protected|private):$`)
+	// A string.
+	reConstChar = regexp.MustCompile(`const char\s?\*`)
+	// e.g. "void bar() const {"
+	reConstMethod = regexp.MustCompile(`^(.+)\) const {$`)
+
+	asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
+)
+
+func countSpaces(l string) int {
+	i := 0
+	for ; i < len(l); i++ {
+		if asciiSpace[l[i]] == 0 {
+			break
+		}
+	}
+	return i
 }
 
 // processLine processes the low hanging fruits first.
@@ -142,6 +122,8 @@ func processLine(l string) Line {
 	return out
 }
 
+// Rest, in order.
+
 // commentDefines comments out #include and #define, including multi-lines
 // defines.
 func commentDefines(lines []Line) []Line {
@@ -161,6 +143,11 @@ func commentDefines(lines []Line) []Line {
 	}
 	return out
 }
+
+//
+
+// e.g. "extern "C" {"
+var reExtern = regexp.MustCompile(`^(\s*)extern (.*)`)
 
 // commentExtern comments out extern and extern "C" {.
 func commentExtern(lines []Line) []Line {
@@ -182,6 +169,38 @@ func commentExtern(lines []Line) []Line {
 	}
 	return out
 }
+
+//
+
+// commentNamespace comment out "namespace foo {".
+//
+// Running it before processFunctionImplementation makes the function easier to
+// implement.
+func commentNamespace(lines []Line) []Line {
+	var out []Line
+	brackets := 0
+	inNamespace := false
+	for _, l := range lines {
+		brackets += strings.Count(l.code, "{")
+		brackets -= strings.Count(l.code, "}")
+		if brackets == 1 && !inNamespace {
+			if strings.HasPrefix(l.code, "namespace") && strings.HasSuffix(l.code, "{") {
+				l.doSkip()
+				inNamespace = true
+			}
+		}
+		if brackets == 0 && l.code == "}" && inNamespace {
+			l.doSkip()
+			inNamespace = false
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+//
+
+var reStructDefinition = regexp.MustCompile(`^struct ([A-Za-z]+)(.+)$`)
 
 // processStructDefinition rewrites the structs.
 func processStructDefinition(lines []Line) []Line {
@@ -208,6 +227,8 @@ func processStructDefinition(lines []Line) []Line {
 	}
 	return out
 }
+
+//
 
 // mergeParenthesis makes all () on one line to make function declaration
 // easier to parse.
@@ -244,63 +265,15 @@ func mergeParenthesis(lines []Line) []Line {
 	return out
 }
 
-func cleanCond(cond string) string {
-	// For conditions with nothing but a word, let's assume it checks for
-	// nil. It's going to be wrong often but I think it's more often right
-	// than wrong.
-	if reSimpleWord.MatchString(cond) {
-		cond += " != nil"
-	} else if reNotSimpleWord.MatchString(cond) {
-		cond = cond[1:] + " == nil"
-	} else if reSimpleWord.MatchString(strings.TrimSuffix(cond, ".empty()")) {
-		// if (foo.empty())
-		cond = "len(" + cond[:len(cond)-len(".empty()")] + ") == 0"
-	} else if reNotSimpleWord.MatchString(strings.TrimSuffix(cond, ".empty()")) {
-		// if (!foo.empty())
-		cond = "len(" + cond[1:len(cond)-len(".empty()")] + ") != 0"
-	}
-	return cond
-}
+//
 
-// fixCondition does two things:
-//  - Fix one liners.
-//  - Remove the extra parenthesis.
-func fixCondition(lines []Line) []Line {
-	var out []Line
-	var insertClosingBracket []string
-	for i, l := range lines {
-		shouldClose := len(insertClosingBracket) != 0
-		// Start of a condition.
-		if strings.HasPrefix(l.code, "if (") || strings.HasPrefix(l.code, "} else if (") {
-			if !strings.HasSuffix(l.code, "{") {
-				// One liner.
-				l.code += " {"
-				insertClosingBracket = append(insertClosingBracket, l.indent)
-			}
-			// Trim the very first and very last parenthesis. There can be inside due
-			// to function calls.
-			j := strings.LastIndex(l.code, ")")
-			c := strings.Index(l.code, "if (")
-			l.code = l.code[:c] + "if " + cleanCond(l.code[4:j]) + l.code[j+1:]
-		} else if l.code == "} else" {
-			// One liner else.
-			l.code += " {"
-			insertClosingBracket = append(insertClosingBracket, l.indent)
-		}
-		out = append(out, l)
-		if shouldClose {
-			// Check if the next line has a "else", if so then add the bracket there.
-			if i < len(lines)-1 && strings.HasPrefix(lines[i+1].code, "else") {
-				lines[i+1].code = "} " + lines[i+1].code
-			} else {
-				out = append(out, Line{indent: insertClosingBracket[len(insertClosingBracket)-1], code: "}"})
-			}
-			insertClosingBracket = insertClosingBracket[:len(insertClosingBracket)-1]
-		}
-	}
-
-	return out
-}
+var (
+	reGoStruct               = regexp.MustCompile(`^type ([a-zA-Z]+) struct {$`)
+	reConstructorDeclaration = regexp.MustCompile(`^([A-Za-z_0-9]+)\s?\([a-zA-Z *,=<>_:&\[\]]*\);$`)
+	// e.g. "void bar();" or "virtual void bar() const = 0;"
+	// 1 is return type, 2 is name.
+	reFuncDeclaration = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const|)\s*(?:= 0|)\s*;$`)
+)
 
 // processFunctionDeclaration comments out forward declarations, grabbing
 // docstring along the way.
@@ -350,7 +323,100 @@ func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 	return out
 }
 
+//
+
+var (
+	// 1 is return type, 2 is name, 3 is args, 4 is brackets
+	reFuncImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
+	// 1 is return type, 2 is class, 3 is name, 4 is args, 5 is brackets
+	reMethodImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)::([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
+)
+
+// processFunctionImplementation handles function implementations.
+//
+// It leverages doc that was populated in processFunctionDeclaration().
+func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
+	var out []Line
+	cur := ""
+	brackets := 0
+	funcName := ""
+	structName := ""
+	receiver := ""
+	for _, l := range lines {
+		brackets += strings.Count(l.code, "{")
+		brackets -= strings.Count(l.code, "}")
+		if m := reFuncImplementation.FindStringSubmatch(l.code); m != nil {
+			// 1 is return type, 2 is name, 3 is args, 4 is brackets
+			if m[1] == "if" {
+				// It's annoying that this triggers, just shrug it.
+				out = append(out, l)
+				continue
+			}
+			if m[1] == "return" {
+				panic(l.code)
+			}
+			if cur != "" {
+				panic(l.code)
+			}
+			if m[1] == "void" {
+				m[1] = ""
+			}
+			funcName = m[2]
+			structName = ""
+			receiver = ""
+			args, err := processArgs(m[3])
+			if err != nil {
+				panic(fmt.Sprintf("%s: %s", l.code, err))
+			}
+			if m[1] == "" {
+				l.code = "func " + funcName + "(" + args + ") " + m[4]
+			} else {
+				l.code = "func " + funcName + "(" + args + ") " + m[1] + " " + m[4]
+			}
+			name := strings.ReplaceAll(m[2], "::", ".")
+			if d := doc[name]; len(d) != 0 {
+				// Insert the doc there.
+				out = append(out, d...)
+			}
+		} else if m := reMethodImplementation.FindStringSubmatch(l.code); m != nil {
+			// 1 is return type, 2 is class, 3 is name, 4 is args, 5 is brackets
+			if m[1] == "if" {
+				// It's annoying that this triggers, just shrug it.
+				out = append(out, l)
+				continue
+			}
+			if m[1] == "void" {
+				m[1] = ""
+			}
+			structName = m[2]
+			funcName = m[3]
+			receiver = strings.ToLower(m[2][:1])
+			args, err := processArgs(m[4])
+			if err != nil {
+				panic(fmt.Sprintf("%s: %s", l.code, err))
+			}
+			if m[1] == "" {
+				l.code = "func (" + receiver + " *" + structName + ") " + funcName + "(" + args + ") " + m[5]
+			} else {
+				l.code = "func (" + receiver + " *" + structName + ") " + funcName + "(" + args + ") " + m[1] + " " + m[5]
+			}
+			name := strings.ReplaceAll(m[2], "::", ".")
+			if d := doc[name]; len(d) != 0 {
+				// Insert the doc there, updating the indentation.
+				for _, x := range d {
+					x.indent = l.indent
+					out = append(out, x)
+				}
+			}
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
 // processArgs process the arguments in a function declaration.
+//
+// Called by processFunctionImplementation for both functions and methods.
 func processArgs(l string) (string, error) {
 	if l == "" {
 		return l, nil
@@ -438,121 +504,81 @@ func processArg(a string) (string, error) {
 	return n + " " + t, nil
 }
 
-// trimNamespace comment out "namespace foo {".
 //
-// Running it before processFunctionImplementation makes the function easier to
-// implement.
-func trimNamespace(lines []Line) []Line {
+
+// fixCondition does two things:
+//  - Fix one liners.
+//  - Remove the extra parenthesis.
+func fixCondition(lines []Line) []Line {
 	var out []Line
-	brackets := 0
-	inNamespace := false
-	for _, l := range lines {
-		brackets += strings.Count(l.code, "{")
-		brackets -= strings.Count(l.code, "}")
-		if brackets == 1 && !inNamespace {
-			if strings.HasPrefix(l.code, "namespace") && strings.HasSuffix(l.code, "{") {
-				l.doSkip()
-				inNamespace = true
+	var insertClosingBracket []string
+	for i, l := range lines {
+		shouldClose := len(insertClosingBracket) != 0
+		// Start of a condition.
+		if strings.HasPrefix(l.code, "if (") || strings.HasPrefix(l.code, "} else if (") {
+			if !strings.HasSuffix(l.code, "{") {
+				// One liner.
+				l.code += " {"
+				insertClosingBracket = append(insertClosingBracket, l.indent)
 			}
-		}
-		if brackets == 0 && l.code == "}" && inNamespace {
-			l.doSkip()
-			inNamespace = false
+			// Trim the very first and very last parenthesis. There can be inside due
+			// to function calls.
+			j := strings.LastIndex(l.code, ")")
+			c := strings.Index(l.code, "if (")
+			l.code = l.code[:c] + "if " + cleanCond(l.code[4:j]) + l.code[j+1:]
+		} else if l.code == "} else" {
+			// One liner else.
+			l.code += " {"
+			insertClosingBracket = append(insertClosingBracket, l.indent)
 		}
 		out = append(out, l)
+		if shouldClose {
+			// Check if the next line has a "else", if so then add the bracket there.
+			if i < len(lines)-1 && strings.HasPrefix(lines[i+1].code, "else") {
+				lines[i+1].code = "} " + lines[i+1].code
+			} else {
+				out = append(out, Line{indent: insertClosingBracket[len(insertClosingBracket)-1], code: "}"})
+			}
+			insertClosingBracket = insertClosingBracket[:len(insertClosingBracket)-1]
+		}
 	}
 	return out
 }
 
-// processFunctionImplementation handles function implementations.
-//
-// It leverages doc that was populated in processFunctionDeclaration().
-func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
-	var out []Line
-	cur := ""
-	brackets := 0
-	funcName := ""
-	structName := ""
-	receiver := ""
-	for _, l := range lines {
-		// At this point, we assume that most statements are merged into one line.
-		// Sources of brackets:
-		// - extern "C" {                      -> was commented out in commentExtern
-		// - namespace foo {                   -> was commented out in trimNamespace
-		// - type Foo struct {                 -> was rewritten in processStructDefinition
-		// - if foo {                          -> was rewritten in mergeParenthesis then fixCondition
-		// - virtual void foo(foo bar) const { -> being rewritten
-		// - void Foo::Bar(foo bar) const {    -> being rewritten
-		brackets += strings.Count(l.code, "{")
-		brackets -= strings.Count(l.code, "}")
-		if m := reFuncImplementation.FindStringSubmatch(l.code); m != nil {
-			// 1 is return type, 2 is name, 3 is args, 4 is brackets
-			if m[1] == "if" {
-				// It's annoying that this triggers, just shrug it.
-				out = append(out, l)
-				continue
-			}
-			if m[1] == "return" {
-				panic(l.code)
-			}
-			if cur != "" {
-				panic(l.code)
-			}
-			if m[1] == "void" {
-				m[1] = ""
-			}
-			funcName = m[2]
-			structName = ""
-			receiver = ""
-			args, err := processArgs(m[3])
-			if err != nil {
-				panic(fmt.Sprintf("%s: %s", l.code, err))
-			}
-			if m[1] == "" {
-				l.code = "func " + funcName + "(" + args + ") " + m[4]
-			} else {
-				l.code = "func " + funcName + "(" + args + ") " + m[1] + " " + m[4]
-			}
-			name := strings.ReplaceAll(m[2], "::", ".")
-			if d := doc[name]; len(d) != 0 {
-				// Insert the doc there.
-				out = append(out, d...)
-			}
-		} else if m := reMethodImplementation.FindStringSubmatch(l.code); m != nil {
-			// 1 is return type, 2 is class, 3 is name, 4 is args, 5 is brackets
-			if m[1] == "if" {
-				// It's annoying that this triggers, just shrug it.
-				out = append(out, l)
-				continue
-			}
-			if m[1] == "void" {
-				m[1] = ""
-			}
-			structName = m[2]
-			funcName = m[3]
-			receiver = strings.ToLower(m[2][:1])
-			args, err := processArgs(m[4])
-			if err != nil {
-				panic(fmt.Sprintf("%s: %s", l.code, err))
-			}
-			if m[1] == "" {
-				l.code = "func (" + receiver + " *" + structName + ") " + funcName + "(" + args + ") " + m[5]
-			} else {
-				l.code = "func (" + receiver + " *" + structName + ") " + funcName + "(" + args + ") " + m[1] + " " + m[5]
-			}
-			name := strings.ReplaceAll(m[2], "::", ".")
-			if d := doc[name]; len(d) != 0 {
-				// Insert the doc there, updating the indentation.
-				for _, x := range d {
-					x.indent = l.indent
-					out = append(out, x)
-				}
-			}
-		}
-		out = append(out, l)
+var (
+	reSimpleWord    = regexp.MustCompile(`^[a-z]+$`)
+	reNotSimpleWord = regexp.MustCompile(`^![a-z]+$`)
+)
+
+func cleanCond(cond string) string {
+	// For conditions with nothing but a word, let's assume it checks for
+	// nil. It's going to be wrong often but I think it's more often right
+	// than wrong.
+	if reSimpleWord.MatchString(cond) {
+		cond += " != nil"
+	} else if reNotSimpleWord.MatchString(cond) {
+		cond = cond[1:] + " == nil"
+	} else if reSimpleWord.MatchString(strings.TrimSuffix(cond, ".empty()")) {
+		// if (foo.empty())
+		cond = "len(" + cond[:len(cond)-len(".empty()")] + ") == 0"
+	} else if reNotSimpleWord.MatchString(strings.TrimSuffix(cond, ".empty()")) {
+		// if (!foo.empty())
+		cond = "len(" + cond[1:len(cond)-len(".empty()")] + ") != 0"
 	}
-	return out
+	return cond
 }
+
+//
+
+func fixLoops(lines []Line) []Line {
+	// TODO(maruel): fixLoops to fix for and convert while to for.
+	return lines
+}
+
+//
+
+// e.g. "foo bar = baz();"
+var reAssignment = regexp.MustCompile(`^(\s*)[a-zA-Z<>\*:&]+ ([a-zA-Z_]+ )=( .+;)$`)
 
 // fixStatements handles statements inside a function.
 func fixStatements(lines []Line) []Line {
@@ -585,6 +611,8 @@ func fixStatements(lines []Line) []Line {
 	return out
 }
 
+// End of fixups.
+
 // load loads a single .h/.cc and processes it to make it closer to Go.
 //
 // The resulting file is not syntactically valid Go but it will make manual fix
@@ -612,17 +640,27 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 	}
 
 	// Starts with zapping out C++ macros, extern and namespaces.
+	// - #define and #include
+	// - extern "C" {
+	// - namespace foo {
 	lines = commentDefines(lines)
 	lines = commentExtern(lines)
-	lines = trimNamespace(lines)
+	lines = commentNamespace(lines)
 
-	// Makes struct better.
+	// Do in order:
+	// - type Foo struct {
+	// - () on one line.
+	// - Save comments on func/method declaration.
+	// - Rewrite function implementation.
+	// - Fix conditions
+	// - Fix loops
+	// - Fix statements.
 	lines = processStructDefinition(lines)
 	lines = mergeParenthesis(lines)
 	lines = processFunctionDeclaration(lines, doc)
 	lines = processFunctionImplementation(lines, doc)
 	lines = fixCondition(lines)
-	// TODO(maruel): fixLoops to fix for and convert while to for.
+	lines = fixLoops(lines)
 	lines = fixStatements(lines)
 
 	//Comment assert()
