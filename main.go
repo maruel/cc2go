@@ -422,9 +422,28 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 	funcName := ""
 	structName := ""
 	receiver := ""
+	inNamespace := false
 	for _, l := range lines {
+		// At this point, we assume that most statements are merged into one line.
+		// Sources of brackets:
+		// - type Foo struct {                 -> was rewritten in processStructDefinition
+		// - if foo {                          -> was rewritten in mergeParenthesis then fixCondition
+		// - namespace foo {
+		// - virtual void foo(foo bar) const { -> being rewritten
+		// - void Foo::Bar(foo bar) const {    -> being rewritten
 		brackets += strings.Count(l.code, "{")
 		brackets -= strings.Count(l.code, "}")
+		if brackets == 1 && !inNamespace {
+			if strings.HasPrefix(l.code, "namespace") && strings.HasSuffix(l.code, "{") {
+				l.doSkip()
+				inNamespace = true
+			}
+		}
+		if brackets == 0 && l.code == "}" && inNamespace {
+			l.doSkip()
+			inNamespace = false
+		}
+
 		if m := reFuncImplementation.FindStringSubmatch(l.code); m != nil {
 			// 1 is return type, 2 is name, 3 is args, 4 is brackets
 			if m[1] == "if" {
