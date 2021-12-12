@@ -44,7 +44,7 @@ var (
 	reFuncImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
 	// 1 is return type, 2 is class, 3 is name, 4 is args, 5 is brackets
 	reMethodImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)::([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
-	reStructDefinition     = regexp.MustCompile(`^struct ([A-Za-z]+)(?:\s*:[a-zA-Z, ]+|)\s*{$`)
+	reStructDefinition     = regexp.MustCompile(`^struct ([A-Za-z]+)(.+)$`)
 	reSimpleWord           = regexp.MustCompile(`^[a-z]+$`)
 	reNotSimpleWord        = regexp.MustCompile(`^![a-z]+$`)
 
@@ -182,9 +182,23 @@ func commentExtern(lines []Line) []Line {
 // processStructDefinition rewrites the structs.
 func processStructDefinition(lines []Line) []Line {
 	var out []Line
-	for _, l := range lines {
+	for i := 0; i < len(lines); i++ {
+		l := lines[i]
 		if m := reStructDefinition.FindStringSubmatch(l.code); m != nil {
-			l.code = "struct " + m[1] + " {"
+			// Sometimes it's a variable declaration.
+			suffix := m[2]
+			if !strings.HasSuffix(suffix, ";") {
+				for strings.HasSuffix(suffix, ",") {
+					// It's a multi-lines definition. We need to skip the next line.
+					i++
+					l.original = append(l.original, lines[i].original...)
+					suffix = lines[i].code
+				}
+				if !strings.HasSuffix(suffix, "{") {
+					panic(l.code)
+				}
+				l.code = "type " + m[1] + " struct {"
+			}
 		}
 		out = append(out, l)
 	}
@@ -405,6 +419,9 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 	var out []Line
 	cur := ""
 	brackets := 0
+	funcName := ""
+	structName := ""
+	receiver := ""
 	for _, l := range lines {
 		brackets += strings.Count(l.code, "{")
 		brackets -= strings.Count(l.code, "}")
@@ -424,14 +441,17 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 			if m[1] == "void" {
 				m[1] = ""
 			}
+			funcName = m[2]
+			structName = ""
+			receiver = ""
 			args, err := processArgs(m[3])
 			if err != nil {
 				panic(fmt.Sprintf("%s: %s", l.code, err))
 			}
 			if m[1] == "" {
-				l.code = "func " + m[2] + "(" + args + ") " + m[4]
+				l.code = "func " + funcName + "(" + args + ") " + m[4]
 			} else {
-				l.code = "func " + m[2] + "(" + args + ") " + m[1] + " " + m[4]
+				l.code = "func " + funcName + "(" + args + ") " + m[1] + " " + m[4]
 			}
 			name := strings.ReplaceAll(m[2], "::", ".")
 			if d := doc[name]; len(d) != 0 {
@@ -448,15 +468,17 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 			if m[1] == "void" {
 				m[1] = ""
 			}
-			p := strings.ToLower(m[2][:1])
+			structName = m[2]
+			funcName = m[3]
+			receiver = strings.ToLower(m[2][:1])
 			args, err := processArgs(m[4])
 			if err != nil {
 				panic(fmt.Sprintf("%s: %s", l.code, err))
 			}
 			if m[1] == "" {
-				l.code = "func (" + p + " *" + m[2] + ") " + m[3] + "(" + args + ") " + m[5]
+				l.code = "func (" + receiver + " *" + structName + ") " + funcName + "(" + args + ") " + m[5]
 			} else {
-				l.code = "func (" + p + " *" + m[2] + ") " + m[3] + "(" + args + ") " + m[1] + " " + m[5]
+				l.code = "func (" + receiver + " *" + structName + ") " + funcName + "(" + args + ") " + m[1] + " " + m[5]
 			}
 			name := strings.ReplaceAll(m[2], "::", ".")
 			if d := doc[name]; len(d) != 0 {
