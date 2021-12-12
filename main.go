@@ -294,11 +294,20 @@ func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 		if brackets == 0 {
 			structName = ""
 		}
-		if structName != "" {
+		if structName != "" && brackets == 1 {
 			if m := reConstructorDeclaration.FindStringSubmatch(l.code); m != nil {
-				// TODO(maruel): Gets confused with simple function calls. Needs to not
-				// process when inside a function.
-				//l.doSkip()
+				if m[1] == structName {
+				}
+				l.doSkip()
+				// Associate the function description if available.
+				for i := len(out) - 1; i >= 0 && out[i].code == "" && out[i].comment != ""; i-- {
+					n := m[1]
+					if structName != "" {
+						n = structName + "." + n
+					}
+					doc[n] = append([]Line{out[i]}, doc[n]...)
+					out[i].skip = true
+				}
 			}
 		}
 		if m := reFuncDeclaration.FindStringSubmatch(l.code); m != nil {
