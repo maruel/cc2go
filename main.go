@@ -48,6 +48,8 @@ var (
 	reSimpleWord           = regexp.MustCompile(`^[a-z]+$`)
 	reNotSimpleWord        = regexp.MustCompile(`^![a-z]+$`)
 
+	reGoStruct = regexp.MustCompile(`^type ([a-zA-Z]+) struct {$`)
+
 	// e.g. "foo bar = baz();"
 	reAssignment = regexp.MustCompile(`^(\s*)[a-zA-Z<>\*:&]+ ([a-zA-Z_]+ )=( .+;)$`)
 )
@@ -140,7 +142,8 @@ func processLine(l string) Line {
 	return out
 }
 
-// commentDefines handles includes and defines, including multi-lines defines.
+// commentDefines comments out #include and #define, including multi-lines
+// defines.
 func commentDefines(lines []Line) []Line {
 	var out []Line
 	indef := false
@@ -159,6 +162,7 @@ func commentDefines(lines []Line) []Line {
 	return out
 }
 
+// commentExtern comments out extern and extern "C" {.
 func commentExtern(lines []Line) []Line {
 	var out []Line
 	inextern := 0
@@ -207,6 +211,9 @@ func processStructDefinition(lines []Line) []Line {
 
 // mergeParenthesis makes all () on one line to make function declaration
 // easier to parse.
+//
+// Merges parenthesis both for function declaration, call, conditions and
+// loops.
 func mergeParenthesis(lines []Line) []Line {
 	out := []Line{}
 	acc := Line{}
@@ -301,12 +308,27 @@ func fixCondition(lines []Line) []Line {
 // Go doesn't need forward declaration.
 func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 	var out []Line
+	structName := ""
+	brackets := 0
 	for _, l := range lines {
-		if m := reConstructorDeclaration.FindStringSubmatch(l.code); m != nil {
-			// TODO(maruel): Gets confused with simple function calls. Needs to not
-			// process when inside a function.
-			//l.doSkip()
-		} else if m := reFuncDeclaration.FindStringSubmatch(l.code); m != nil {
+		brackets += strings.Count(l.code, "{")
+		brackets -= strings.Count(l.code, "}")
+		if brackets == 1 {
+			if m := reGoStruct.FindStringSubmatch(l.code); m != nil {
+				structName = m[1]
+			}
+		}
+		if brackets == 0 {
+			structName = ""
+		}
+		if structName != "" {
+			if m := reConstructorDeclaration.FindStringSubmatch(l.code); m != nil {
+				// TODO(maruel): Gets confused with simple function calls. Needs to not
+				// process when inside a function.
+				//l.doSkip()
+			}
+		}
+		if m := reFuncDeclaration.FindStringSubmatch(l.code); m != nil {
 			if m[1] == "return" {
 				// It's super annoying that "return Foo();" triggers but there's
 				// nothing to do but explicitly ignore.
@@ -315,7 +337,11 @@ func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 			l.doSkip()
 			// Associate the function description if available.
 			for i := len(out) - 1; i >= 0 && out[i].code == "" && out[i].comment != ""; i-- {
-				doc[m[2]] = append([]Line{out[i]}, doc[m[2]]...)
+				n := m[2]
+				if structName != "" {
+					n = structName + "." + n
+				}
+				doc[n] = append([]Line{out[i]}, doc[n]...)
 				out[i].skip = true
 			}
 		}
@@ -412,25 +438,15 @@ func processArg(a string) (string, error) {
 	return n + " " + t, nil
 }
 
-// processFunctionImplementation handles function implementations.
+// trimNamespace comment out "namespace foo {".
 //
-// It leverages doc that was populated in processFunctionDeclaration().
-func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
+// Running it before processFunctionImplementation makes the function easier to
+// implement.
+func trimNamespace(lines []Line) []Line {
 	var out []Line
-	cur := ""
 	brackets := 0
-	funcName := ""
-	structName := ""
-	receiver := ""
 	inNamespace := false
 	for _, l := range lines {
-		// At this point, we assume that most statements are merged into one line.
-		// Sources of brackets:
-		// - type Foo struct {                 -> was rewritten in processStructDefinition
-		// - if foo {                          -> was rewritten in mergeParenthesis then fixCondition
-		// - namespace foo {
-		// - virtual void foo(foo bar) const { -> being rewritten
-		// - void Foo::Bar(foo bar) const {    -> being rewritten
 		brackets += strings.Count(l.code, "{")
 		brackets -= strings.Count(l.code, "}")
 		if brackets == 1 && !inNamespace {
@@ -443,7 +459,32 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 			l.doSkip()
 			inNamespace = false
 		}
+		out = append(out, l)
+	}
+	return out
+}
 
+// processFunctionImplementation handles function implementations.
+//
+// It leverages doc that was populated in processFunctionDeclaration().
+func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
+	var out []Line
+	cur := ""
+	brackets := 0
+	funcName := ""
+	structName := ""
+	receiver := ""
+	for _, l := range lines {
+		// At this point, we assume that most statements are merged into one line.
+		// Sources of brackets:
+		// - extern "C" {                      -> was commented out in commentExtern
+		// - namespace foo {                   -> was commented out in trimNamespace
+		// - type Foo struct {                 -> was rewritten in processStructDefinition
+		// - if foo {                          -> was rewritten in mergeParenthesis then fixCondition
+		// - virtual void foo(foo bar) const { -> being rewritten
+		// - void Foo::Bar(foo bar) const {    -> being rewritten
+		brackets += strings.Count(l.code, "{")
+		brackets -= strings.Count(l.code, "}")
 		if m := reFuncImplementation.FindStringSubmatch(l.code); m != nil {
 			// 1 is return type, 2 is name, 3 is args, 4 is brackets
 			if m[1] == "if" {
@@ -570,13 +611,18 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 		lines = append(lines, processLine(l))
 	}
 
+	// Starts with zapping out C++ macros, extern and namespaces.
 	lines = commentDefines(lines)
-	lines = mergeParenthesis(lines)
-	lines = fixCondition(lines)
 	lines = commentExtern(lines)
+	lines = trimNamespace(lines)
+
+	// Makes struct better.
 	lines = processStructDefinition(lines)
+	lines = mergeParenthesis(lines)
 	lines = processFunctionDeclaration(lines, doc)
 	lines = processFunctionImplementation(lines, doc)
+	lines = fixCondition(lines)
+	// TODO(maruel): fixLoops to fix for and convert while to for.
 	lines = fixStatements(lines)
 
 	//Comment assert()
