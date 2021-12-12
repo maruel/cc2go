@@ -573,9 +573,6 @@ func process(outDir, inDir, root string, keepSkip bool) error {
 	doc := map[string][]Line{}
 	hdr1, c1 := load(filepath.Join(inDir, root+".h"), keepSkip, doc)
 	hdr2, c2 := load(filepath.Join(inDir, root+".cc"), keepSkip, doc)
-	if len(doc) != 0 {
-		//log.Printf("%v", doc)
-	}
 	out := hdr1
 	if hdr1 != hdr2 {
 		out += hdr2
