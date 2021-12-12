@@ -743,6 +743,7 @@ func fixStatements(lines []Line) []Line {
 
 	// TODO(maruel): Constructor, destructor.
 	// Remove const
+	// Change ++p to p++
 	//addThisPointer(out)
 	insideBlock := 0
 	var out []Line
