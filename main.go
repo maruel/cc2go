@@ -562,7 +562,7 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 }
 
 // process processes a pair of .h/.cc files.
-func process(outDir, inDir, root string, keepSkip bool) error {
+func process(pkg, outDir, inDir, root string, keepSkip bool) error {
 	f := filepath.Join(outDir, root+".go")
 	if content, _ := ioutil.ReadFile(f); len(content) != 0 {
 		if !bytes.Contains(content, []byte("//go:build nobuild")) {
@@ -577,13 +577,12 @@ func process(outDir, inDir, root string, keepSkip bool) error {
 	if hdr1 != hdr2 {
 		out += hdr2
 	}
-	out += "\n//go:build nobuild\n\npackage ginga\n\n" + c1 + c2
+	out += "\n//go:build nobuild\n\npackage " + pkg + "\n\n" + c1 + c2
 	return os.WriteFile(f, []byte(out), 0o644)
 }
 
-// gingaContent adds glue code to make transition a tad easier.
-const gingaContent = `package ginga
-
+// glueContent adds glue code to make transition a tad easier.
+const glueContent = `
 import (
   "fmt"
   "io"
@@ -613,6 +612,7 @@ func mainImpl() error {
 	inDir := flag.String("i", "src", "input directory")
 	outDir := flag.String("o", ".", "output directory")
 	keepSkip := flag.Bool("s", false, "keep skipped lines")
+	pkg := flag.String("p", "ginja", "package name to use")
 	flag.Parse()
 	log.SetFlags(0)
 	if !*v {
@@ -652,19 +652,19 @@ func mainImpl() error {
 		sort.Strings(files)
 	}
 	for _, root := range files {
-		if err := process(*outDir, *inDir, root, *keepSkip); err != nil {
+		if err := process(*pkg, *outDir, *inDir, root, *keepSkip); err != nil {
 			return err
 		}
 	}
 
 	// Inject a file with helpers.
-	if err := ioutil.WriteFile(filepath.Join(*outDir, "ginja.go"), []byte(gingaContent), 0o644); err != nil {
+	if err := ioutil.WriteFile(filepath.Join(*outDir, *pkg+".go"), []byte("package "+*pkg+"\n"+glueContent), 0o644); err != nil {
 		return err
 	}
 
-	// Insert a go.mod if missign.
+	// Insert a go.mod if missing.
 	if _, err := os.Stat(filepath.Join(*outDir, "go.mod")); os.IsNotExist(err) {
-		cmd := exec.Command("go", "mod", "init", "ginga")
+		cmd := exec.Command("go", "mod", "init", *pkg)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Dir = *outDir
