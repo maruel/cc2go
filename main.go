@@ -38,9 +38,11 @@ var (
 
 	// e.g. "void bar();" or "virtual void bar() const = 0;"
 	// 1 is return type, 2 is name.
-	reFuncDeclaration = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const|)\s*(?:= 0|)\s*;$`)
+	reFuncDeclaration        = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const|)\s*(?:= 0|)\s*;$`)
+	reConstructorDeclaration = regexp.MustCompile(`^([A-Za-z_0-9]+)\s?\([a-zA-Z *,=<>_:&\[\]]*\);$`)
 	// 1 is return type, 2 is name, 3 is args, 4 is brackets
 	reFuncImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
+	reStructDefinition   = regexp.MustCompile(`^struct ([A-Za-z]+)(?:\s*:[a-zA-Z, ]+|)\s*{$`)
 	reSimpleWord         = regexp.MustCompile(`^[a-z]+$`)
 	reNotSimpleWord      = regexp.MustCompile(`^![a-z]+$`)
 
@@ -175,6 +177,18 @@ func commentExtern(lines []Line) []Line {
 	return out
 }
 
+// processStructDefinition rewrites the structs.
+func processStructDefinition(lines []Line) []Line {
+	var out []Line
+	for _, l := range lines {
+		if m := reStructDefinition.FindStringSubmatch(l.code); m != nil {
+			l.code = "struct " + m[1] + " {"
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
 // mergeParenthesis makes all () on one line to make function declaration
 // easier to parse.
 func mergeParenthesis(lines []Line) []Line {
@@ -189,7 +203,7 @@ func mergeParenthesis(lines []Line) []Line {
 		count += strings.Count(l.code, "(")
 		count -= strings.Count(l.code, ")")
 		if count < 0 {
-			panic(count)
+			fmt.Fprintf(os.Stderr, "ERROR: mergeParenthesis %d\n", count)
 		} else {
 			// Merging matching ) to the previous line containing the (.
 			acc.original = append(acc.original, l.original...)
@@ -207,49 +221,61 @@ func mergeParenthesis(lines []Line) []Line {
 	return out
 }
 
+func cleanCond(cond string) string {
+	// For conditions with nothing but a word, let's assume it checks for
+	// nil. It's going to be wrong often but I think it's more often right
+	// than wrong.
+	if reSimpleWord.MatchString(cond) {
+		cond += " != nil"
+	} else if reNotSimpleWord.MatchString(cond) {
+		cond = cond[1:] + " == nil"
+	} else if reSimpleWord.MatchString(strings.TrimSuffix(cond, ".empty()")) {
+		// if (foo.empty())
+		cond = "len(" + cond[:len(cond)-len(".empty()")] + ") == 0"
+	} else if reNotSimpleWord.MatchString(strings.TrimSuffix(cond, ".empty()")) {
+		// if (!foo.empty())
+		cond = "len(" + cond[1:len(cond)-len(".empty()")] + ") != 0"
+	}
+	return cond
+}
+
 // fixCondition does two things:
-//  - Remove the extra parenthesis.
 //  - Fix one liners.
+//  - Remove the extra parenthesis.
 func fixCondition(lines []Line) []Line {
 	var out []Line
 	var insertClosingBracket []string
-	for _, l := range lines {
-		if strings.HasPrefix(l.code, "if (") {
-			// There's a comment at least once so don't use HasSuffix.
-			if !strings.Contains(l.code, "{") {
+	for i, l := range lines {
+		shouldClose := len(insertClosingBracket) != 0
+		// Start of a condition.
+		if strings.HasPrefix(l.code, "if (") || strings.HasPrefix(l.code, "} else if (") {
+			if !strings.HasSuffix(l.code, "{") {
 				// One liner.
 				l.code += " {"
 				insertClosingBracket = append(insertClosingBracket, l.indent)
 			}
 			// Trim the very first and very last parenthesis. There can be inside due
 			// to function calls.
-			i := strings.LastIndex(l.code, ")")
-			cond := l.code[4:i]
-			// For conditions with nothing but a word, let's assume it checks for
-			// nil. It's going to be wrong often but I think it's more often right
-			// than wrong.
-			if reSimpleWord.MatchString(cond) {
-				cond += " != nil"
-			} else if reNotSimpleWord.MatchString(cond) {
-				cond = cond[1:] + " == nil"
-			} else if reSimpleWord.MatchString(strings.TrimSuffix(cond, ".empty()")) {
-				// if (foo.empty())
-				cond = "len(" + cond[:len(cond)-len(".empty()")] + ") == 0"
-			} else if reNotSimpleWord.MatchString(strings.TrimSuffix(cond, ".empty()")) {
-				// if (!foo.empty())
-				cond = "len(" + cond[1:len(cond)-len(".empty()")] + ") != 0"
+			j := strings.LastIndex(l.code, ")")
+			c := strings.Index(l.code, "if (")
+			l.code = l.code[:c] + "if " + cleanCond(l.code[4:j]) + l.code[j+1:]
+		} else if l.code == "} else" {
+			// One liner else.
+			l.code += " {"
+			insertClosingBracket = append(insertClosingBracket, l.indent)
+		}
+		out = append(out, l)
+		if shouldClose {
+			// Check if the next line has a "else", if so then add the bracket there.
+			if i < len(lines)-1 && strings.HasPrefix(lines[i+1].code, "else") {
+				lines[i+1].code = "} " + lines[i+1].code
+			} else {
+				out = append(out, Line{indent: insertClosingBracket[len(insertClosingBracket)-1], code: "}"})
 			}
-			l.code = "if " + cond + l.code[i+1:]
-			out = append(out, l)
-		} else if len(insertClosingBracket) != 0 {
-			// TODO(maruel): "else if"
-			out = append(out, l)
-			out = append(out, Line{indent: insertClosingBracket[len(insertClosingBracket)-1], code: "}"})
 			insertClosingBracket = insertClosingBracket[:len(insertClosingBracket)-1]
-		} else {
-			out = append(out, l)
 		}
 	}
+
 	return out
 }
 
@@ -260,7 +286,11 @@ func fixCondition(lines []Line) []Line {
 func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 	var out []Line
 	for _, l := range lines {
-		if m := reFuncDeclaration.FindStringSubmatch(l.code); m != nil {
+		if m := reConstructorDeclaration.FindStringSubmatch(l.code); m != nil {
+			// TODO(maruel): Gets confused with simple function calls. Needs to not
+			// process when inside a function.
+			//l.doSkip()
+		} else if m := reFuncDeclaration.FindStringSubmatch(l.code); m != nil {
 			if m[1] == "return" {
 				// It's super annoying that "return Foo();" triggers but there's
 				// nothing to do but explicitly ignore.
@@ -278,6 +308,35 @@ func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 	return out
 }
 
+func processArgs(l string) string {
+	if l == "" {
+		return l
+	}
+	return l
+	// TODO(maruel): Handle templates.
+	/*
+		out := ""
+		for _, a := range strings.Split(l, ", ") {
+			c := strings.LastIndex(a, " ")
+			if c == -1 {
+				fmt.Fprintf(os.Stderr, "ERROR: processArgs %s\n", l)
+			}
+			t := a[:c]
+			n := a[c+1:]
+			star := strings.HasSuffix(t, "*")
+			if star {
+				t = t[:len(t)-1]
+				n = "*" + n
+			}
+			if out != "" {
+				out += ", "
+			}
+			out += n + " " + t
+		}
+		return out
+	*/
+}
+
 // processFunctionImplementation handles function implementations.
 //
 // It leverages doc that was populated in processFunctionDeclaration().
@@ -290,6 +349,11 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 		brackets -= strings.Count(l.code, "}")
 		if m := reFuncImplementation.FindStringSubmatch(l.code); m != nil {
 			// 1 is return type, 2 is name, 3 is args, 4 is brackets
+			if m[1] == "if" {
+				// It's annoying that this triggers, just shrug it.
+				out = append(out, l)
+				continue
+			}
 			if m[1] == "return" {
 				panic(l.code)
 			}
@@ -299,7 +363,13 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 			if m[1] == "void" {
 				m[1] = ""
 			}
-			l.code = "func " + m[2] + "(" + m[3] + ") " + m[1] + " " + m[4]
+			//log.Printf("%s", l.code)
+			args := processArgs(m[3])
+			if m[1] == "" {
+				l.code = "func " + m[2] + "(" + args + ") " + m[4]
+			} else {
+				l.code = "func " + m[2] + "(" + args + ") " + m[1] + " " + m[4]
+			}
 			name := strings.ReplaceAll(m[2], "::", ".")
 			if d := doc[name]; len(d) != 0 {
 				// Insert the doc there.
@@ -328,7 +398,7 @@ func fixStatements(lines []Line) []Line {
 		insideBlock += strings.Count(l.code, "{")
 		insideBlock -= strings.Count(l.code, "}")
 		if insideBlock < 0 {
-			panic(fmt.Sprintf("%d: %s", i, l.String()))
+			fmt.Fprintf(os.Stderr, "ERROR fixStatements: %d: %s\n", i, l.String())
 		}
 		if was > 0 {
 			// Process a statement.
@@ -374,6 +444,7 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = mergeParenthesis(lines)
 	lines = fixCondition(lines)
 	lines = commentExtern(lines)
+	lines = processStructDefinition(lines)
 	lines = processFunctionDeclaration(lines, doc)
 	lines = processFunctionImplementation(lines, doc)
 	lines = fixStatements(lines)
@@ -394,7 +465,7 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 		}
 		l.code = strings.TrimSuffix(l.code, ";")
 		s := l.String()
-		if wasEmpty && s == "" {
+		if !keepSkip && wasEmpty && s == "" {
 			continue
 		}
 		wasEmpty = s == ""
@@ -416,7 +487,7 @@ func process(outDir, inDir, root string, keepSkip bool) error {
 	hdr1, c1 := load(filepath.Join(inDir, root+".h"), keepSkip, doc)
 	hdr2, c2 := load(filepath.Join(inDir, root+".cc"), keepSkip, doc)
 	if len(doc) != 0 {
-		log.Printf("%v", doc)
+		//log.Printf("%v", doc)
 	}
 	out := hdr1
 	if hdr1 != hdr2 {
@@ -464,35 +535,38 @@ func mainImpl() error {
 		log.SetOutput(ioutil.Discard)
 	}
 
-	// Get the list of source files.
-	entries, err := os.ReadDir(*inDir)
-	if err != nil {
-		return err
-	}
-	roots := map[string]struct{}{}
-	for _, e := range entries {
-		n := e.Name()
-		ext := filepath.Ext(n)
-		if ext != ".h" && ext != ".cc" {
-			continue
-		}
-		n = n[:len(n)-len(ext)]
-		roots[n] = struct{}{}
-	}
-	if _, err := os.Stat(*outDir); os.IsNotExist(err) {
-		if err = os.Mkdir(*outDir, 0o755); err != nil {
+	files := flag.Args()
+	if len(files) == 0 {
+		// Get the list of source files.
+		entries, err := os.ReadDir(*inDir)
+		if err != nil {
 			return err
 		}
-	} else if err != nil {
-		return err
-	}
+		roots := map[string]struct{}{}
+		for _, e := range entries {
+			n := e.Name()
+			ext := filepath.Ext(n)
+			if ext != ".h" && ext != ".cc" {
+				continue
+			}
+			n = n[:len(n)-len(ext)]
+			roots[n] = struct{}{}
+		}
+		if _, err := os.Stat(*outDir); os.IsNotExist(err) {
+			if err = os.Mkdir(*outDir, 0o755); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
 
-	// Process all the source files in order.
-	files := make([]string, 0, len(roots))
-	for root := range roots {
-		files = append(files, root)
+		// Process all the source files in order.
+		files = make([]string, 0, len(roots))
+		for root := range roots {
+			files = append(files, root)
+		}
+		sort.Strings(files)
 	}
-	sort.Strings(files)
 	for _, root := range files {
 		if err := process(*outDir, *inDir, root, *keepSkip); err != nil {
 			return err
