@@ -55,21 +55,17 @@ jobs:
 
       # Fetch the tools before checking out, so they don't modify go.mod/go.sum.
     - name: 'go install necessary tools'
-      run: >
-        cd ..;
-        go install -v
-        github.com/gordonklaus/ineffassign@latest
-        github.com/securego/gosec/cmd/gosec@latest
-        golang.org/x/lint/golint@latest
-        golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow@latest
-        honnef.co/go/tools/cmd/staticcheck@latest
+      run: |
+        go install -v github.com/gordonklaus/ineffassign@latest
+        go install -v github.com/securego/gosec/cmd/gosec@latest
+        go install -v golang.org/x/lint/golint@latest
+        go install -v golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow@latest
+        go install -v honnef.co/go/tools/cmd/staticcheck@latest
     - name: 'go install necessary tools (ubuntu)'
       if: always() && matrix.os == 'ubuntu-latest'
-      run: >
-        cd ..;
-        go install -v
-        github.com/client9/misspell/cmd/misspell@latest
-        github.com/google/addlicense@latest
+      run: |
+        go install -v github.com/client9/misspell/cmd/misspell@latest
+        go install -v github.com/google/addlicense@latest
 
       # Now run proper checks.
     - name: 'Check: go vet'
