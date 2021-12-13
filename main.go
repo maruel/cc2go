@@ -318,8 +318,6 @@ func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 		}
 		if structName != "" && brackets == 1 {
 			if m := reConstructorDeclaration.FindStringSubmatch(l.code); m != nil {
-				if m[1] == structName {
-				}
 				l.doSkip()
 				// Associate the function description if available.
 				for i := len(out) - 1; i >= 0 && out[i].code == "" && out[i].comment != ""; i-- {
