@@ -62,6 +62,9 @@ var (
 	// e.g. "void bar() const {"
 	reConstMethod = regexp.MustCompile(`^(.+)\) const {$`)
 
+	// e.g. "TEST_F(DepfileParserTest, Continuation) {"
+	reGoogleTestfunc = regexp.MustCompile(`^TEST_F\(([a-zA-Z]+), ([a-zA-Z]+)\) {$`)
+
 	asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
 )
 
@@ -118,6 +121,10 @@ func processLine(l string) Line {
 	out.code = reConstChar.ReplaceAllString(out.code, "string")
 	if reConstMethod.MatchString(out.code) {
 		out.code = reConstMethod.ReplaceAllString(out.code, "$1) {")
+	}
+	// Easy to replace google test function into a proper Go function right away.
+	if m := reGoogleTestfunc.FindStringSubmatch(out.code); m != nil {
+		out.code = "func Test" + m[1] + "_" + m[2] + "(t *testing.T) {"
 	}
 	return out
 }
@@ -846,6 +853,7 @@ func process(pkg, outDir, inDir, root string, keepSkip bool) error {
 	if content, _ := ioutil.ReadFile(f); len(content) != 0 {
 		if !bytes.Contains(content, []byte("//go:build nobuild")) {
 			// It is legitimate, do not overwrite.
+			log.Printf("skipping %s", root+".go")
 			return nil
 		}
 	}
