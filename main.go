@@ -63,7 +63,15 @@ var (
 	reConstMethod = regexp.MustCompile(`^(.+)\) const {$`)
 
 	// e.g. "TEST_F(DepfileParserTest, Continuation) {"
-	reGoogleTestfunc = regexp.MustCompile(`^TEST_F\(([a-zA-Z]+), ([a-zA-Z]+)\) {$`)
+	reGoogleTestfunc  = regexp.MustCompile(`^TEST_F\(([a-zA-Z]+), ([a-zA-Z]+)\) {$`)
+	reGoogleTestEQ    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_EQ\(([^,]+), (.+)\);$`)
+	reGoogleTestNE    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_NE\(([^,()]+), (.+)\);$`)
+	reGoogleTestGT    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_GT\(([^,()]+), (.+)\);$`)
+	reGoogleTestGE    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_GE\(([^,()]+), (.+)\);$`)
+	reGoogleTestLT    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_LT\(([^,()]+), (.+)\);$`)
+	reGoogleTestLE    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_LE\(([^,()]+), (.+)\);$`)
+	reGoogleTestTrue  = regexp.MustCompile(`^(?:ASSERT|EXPECT)_TRUE\((.+)\);$`)
+	reGoogleTestFalse = regexp.MustCompile(`^(?:ASSERT|EXPECT)_FALSE\((.+)\);$`)
 
 	asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
 )
@@ -125,6 +133,22 @@ func processLine(l string) Line {
 	// Easy to replace google test function into a proper Go function right away.
 	if m := reGoogleTestfunc.FindStringSubmatch(out.code); m != nil {
 		out.code = "func Test" + m[1] + "_" + m[2] + "(t *testing.T) {"
+	} else if m := reGoogleTestEQ.FindStringSubmatch(out.code); m != nil {
+		out.code = "if " + m[1] + " != " + m[2] + " { t.FailNow() }"
+	} else if m := reGoogleTestNE.FindStringSubmatch(out.code); m != nil {
+		out.code = "if " + m[1] + " == " + m[2] + " { t.FailNow() }"
+	} else if m := reGoogleTestGT.FindStringSubmatch(out.code); m != nil {
+		out.code = "if " + m[1] + " <= " + m[2] + " { t.FailNow() }"
+	} else if m := reGoogleTestGE.FindStringSubmatch(out.code); m != nil {
+		out.code = "if " + m[1] + " < " + m[2] + " { t.FailNow() }"
+	} else if m := reGoogleTestLT.FindStringSubmatch(out.code); m != nil {
+		out.code = "if " + m[1] + " >= " + m[2] + " { t.FailNow() }"
+	} else if m := reGoogleTestLE.FindStringSubmatch(out.code); m != nil {
+		out.code = "if " + m[1] + " > " + m[2] + " { t.FailNow() }"
+	} else if m := reGoogleTestTrue.FindStringSubmatch(out.code); m != nil {
+		out.code = "if " + m[1] + " { t.FailNow() }"
+	} else if m := reGoogleTestFalse.FindStringSubmatch(out.code); m != nil {
+		out.code = "if !" + m[1] + " { t.FailNow() }"
 	}
 	return out
 }
