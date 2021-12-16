@@ -62,17 +62,6 @@ var (
 	// e.g. "void bar() const {"
 	reConstMethod = regexp.MustCompile(`^(.+)\) const {$`)
 
-	// e.g. "TEST_F(DepfileParserTest, Continuation) {"
-	reGoogleTestfunc  = regexp.MustCompile(`^TEST_F\(([a-zA-Z]+), ([a-zA-Z]+)\) {$`)
-	reGoogleTestEQ    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_EQ\(([^,]+), (.+)\);$`)
-	reGoogleTestNE    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_NE\(([^,()]+), (.+)\);$`)
-	reGoogleTestGT    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_GT\(([^,()]+), (.+)\);$`)
-	reGoogleTestGE    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_GE\(([^,()]+), (.+)\);$`)
-	reGoogleTestLT    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_LT\(([^,()]+), (.+)\);$`)
-	reGoogleTestLE    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_LE\(([^,()]+), (.+)\);$`)
-	reGoogleTestTrue  = regexp.MustCompile(`^(?:ASSERT|EXPECT)_TRUE\((.+)\);$`)
-	reGoogleTestFalse = regexp.MustCompile(`^(?:ASSERT|EXPECT)_FALSE\((.+)\);$`)
-
 	asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
 )
 
@@ -129,26 +118,6 @@ func processLine(l string) Line {
 	out.code = reConstChar.ReplaceAllString(out.code, "string")
 	if reConstMethod.MatchString(out.code) {
 		out.code = reConstMethod.ReplaceAllString(out.code, "$1) {")
-	}
-	// Easy to replace google test function into a proper Go function right away.
-	if m := reGoogleTestfunc.FindStringSubmatch(out.code); m != nil {
-		out.code = "func Test" + m[1] + "_" + m[2] + "(t *testing.T) {"
-	} else if m := reGoogleTestEQ.FindStringSubmatch(out.code); m != nil {
-		out.code = "if " + m[1] + " != " + m[2] + " { t.FailNow() }"
-	} else if m := reGoogleTestNE.FindStringSubmatch(out.code); m != nil {
-		out.code = "if " + m[1] + " == " + m[2] + " { t.FailNow() }"
-	} else if m := reGoogleTestGT.FindStringSubmatch(out.code); m != nil {
-		out.code = "if " + m[1] + " <= " + m[2] + " { t.FailNow() }"
-	} else if m := reGoogleTestGE.FindStringSubmatch(out.code); m != nil {
-		out.code = "if " + m[1] + " < " + m[2] + " { t.FailNow() }"
-	} else if m := reGoogleTestLT.FindStringSubmatch(out.code); m != nil {
-		out.code = "if " + m[1] + " >= " + m[2] + " { t.FailNow() }"
-	} else if m := reGoogleTestLE.FindStringSubmatch(out.code); m != nil {
-		out.code = "if " + m[1] + " > " + m[2] + " { t.FailNow() }"
-	} else if m := reGoogleTestTrue.FindStringSubmatch(out.code); m != nil {
-		out.code = "if " + m[1] + " { t.FailNow() }"
-	} else if m := reGoogleTestFalse.FindStringSubmatch(out.code); m != nil {
-		out.code = "if !" + m[1] + " { t.FailNow() }"
 	}
 	return out
 }
@@ -393,6 +362,8 @@ var (
 	reFuncImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
 	// 1 is return type, 2 is class, 3 is name, 4 is args, 5 is brackets
 	reMethodImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)::([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
+	// e.g. "TEST_F(DepfileParserTest, Continuation) {"
+	reGoogleTestfunc = regexp.MustCompile(`^TEST_F\(([a-zA-Z]+), ([a-zA-Z]+)\) {$`)
 )
 
 // processFunctionImplementation handles function implementations.
@@ -415,7 +386,10 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 			structName = ""
 		}
 
-		if m := reFuncImplementation.FindStringSubmatch(l.code); m != nil {
+		// Easy to replace google test function into a proper Go function right away.
+		if m := reGoogleTestfunc.FindStringSubmatch(l.code); m != nil {
+			l.code = "func Test" + m[1] + "_" + m[2] + "(t *testing.T) {"
+		} else if m := reFuncImplementation.FindStringSubmatch(l.code); m != nil {
 			// 1 is return type, 2 is name, 3 is args, 4 is brackets
 			if m[1] == "if" {
 				// It's annoying that this triggers, just shrug it.
@@ -762,8 +736,19 @@ func fixLoops(lines []Line) []Line {
 
 //
 
-// e.g. "foo bar = baz();"
-var reAssignment = regexp.MustCompile(`^(\s*)[a-zA-Z<>\*:&]+ ([a-zA-Z_]+ )=( .+;)$`)
+var (
+	// e.g. "foo bar = baz();"
+	reAssignment = regexp.MustCompile(`^(\s*)[a-zA-Z<>\*:&]+ ([a-zA-Z_]+ )=( .+;)$`)
+
+	reGoogleTestEQ    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_EQ\(([^,]+), (.+)\);$`)
+	reGoogleTestNE    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_NE\(([^,]+), (.+)\);$`)
+	reGoogleTestGT    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_GT\(([^,]+), (.+)\);$`)
+	reGoogleTestGE    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_GE\(([^,]+), (.+)\);$`)
+	reGoogleTestLT    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_LT\(([^,]+), (.+)\);$`)
+	reGoogleTestLE    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_LE\(([^,]+), (.+)\);$`)
+	reGoogleTestTrue  = regexp.MustCompile(`^(?:ASSERT|EXPECT)_TRUE\((.+)\);$`)
+	reGoogleTestFalse = regexp.MustCompile(`^(?:ASSERT|EXPECT)_FALSE\((.+)\);$`)
+)
 
 // fixStatements handles statements inside a function.
 func fixStatements(lines []Line) []Line {
@@ -789,7 +774,24 @@ func fixStatements(lines []Line) []Line {
 			} else if m := reAssignment.FindStringSubmatch(l.code); m != nil {
 				//Convert "foo bar = baz();" to "bar := baz();"
 				l.code = m[1] + m[2] + ":=" + m[3]
+			} else if m := reGoogleTestEQ.FindStringSubmatch(l.code); m != nil {
+				l.code = "if " + m[1] + " != " + m[2] + " { t.FailNow() }"
+			} else if m := reGoogleTestNE.FindStringSubmatch(l.code); m != nil {
+				l.code = "if " + m[1] + " == " + m[2] + " { t.FailNow() }"
+			} else if m := reGoogleTestGT.FindStringSubmatch(l.code); m != nil {
+				l.code = "if " + m[1] + " <= " + m[2] + " { t.FailNow() }"
+			} else if m := reGoogleTestGE.FindStringSubmatch(l.code); m != nil {
+				l.code = "if " + m[1] + " < " + m[2] + " { t.FailNow() }"
+			} else if m := reGoogleTestLT.FindStringSubmatch(l.code); m != nil {
+				l.code = "if " + m[1] + " >= " + m[2] + " { t.FailNow() }"
+			} else if m := reGoogleTestLE.FindStringSubmatch(l.code); m != nil {
+				l.code = "if " + m[1] + " > " + m[2] + " { t.FailNow() }"
+			} else if m := reGoogleTestTrue.FindStringSubmatch(l.code); m != nil {
+				l.code = "if " + m[1] + " { t.FailNow() }"
+			} else if m := reGoogleTestFalse.FindStringSubmatch(l.code); m != nil {
+				l.code = "if !" + m[1] + " { t.FailNow() }"
 			}
+
 		}
 		out = append(out, l)
 	}
