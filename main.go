@@ -363,7 +363,7 @@ var (
 	// 1 is return type, 2 is class, 3 is name, 4 is args, 5 is brackets
 	reMethodImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)::([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
 	// e.g. "TEST_F(DepfileParserTest, Continuation) {"
-	reGoogleTestfunc = regexp.MustCompile(`^TEST_F\(([a-zA-Z]+), ([a-zA-Z]+)\) {$`)
+	reGoogleTestfunc = regexp.MustCompile(`^TEST(?:|_F)\(([a-zA-Z]+), ([a-zA-Z]+)\) {$`)
 )
 
 // processFunctionImplementation handles function implementations.
