@@ -894,6 +894,22 @@ func fixAssignments(lines []Line) []Line {
 
 //
 
+func fixPreIncrement(lines []Line) []Line {
+	var out []Line
+	for _, l := range lines {
+		if strings.HasPrefix(l.code, "++") {
+			l.code = strings.TrimRight(l.code[2:], ";") + "++"
+		}
+		if strings.HasPrefix(l.code, "--") {
+			l.code = strings.TrimRight(l.code[2:], ";") + "--"
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+//
+
 func fixClear(lines []Line) []Line {
 	var out []Line
 	for _, l := range lines {
@@ -999,6 +1015,7 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = fixInsideFuncs(lines, fixWhile)
 	lines = fixInsideFuncs(lines, fixFor)
 	lines = fixInsideFuncs(lines, fixAssignments)
+	lines = fixInsideFuncs(lines, fixPreIncrement)
 	lines = fixInsideFuncs(lines, fixClear)
 	lines = fixInsideFuncs(lines, fixAsserts)
 	// TODO(maruel): Constructor, destructor.
