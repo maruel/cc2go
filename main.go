@@ -574,8 +574,7 @@ func fixCondition(lines []Line) []Line {
 		l := lines[i]
 		// Look for functions. It is easy now that the functions start with
 		// "func " and that they are on one line.
-		// Include hack for TEST_F() googletest.
-		if strings.HasPrefix(l.code, "func ") || strings.HasPrefix(l.code, "TEST_F(") {
+		if strings.HasPrefix(l.code, "func ") {
 			// Find the end, and process this part only.
 			b := countBrackets(l.code)
 			end := i
