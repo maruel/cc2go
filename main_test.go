@@ -13,7 +13,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-func TestFixCondition(t *testing.T) {
+func TestFixIf(t *testing.T) {
 	data := []struct {
 		input string
 		want  string
@@ -272,7 +272,7 @@ func foo() {
 				input = append(input, processLine(j))
 			}
 			got := ""
-			lines := fixCondition(input)
+			lines := fixInsideFuncs(input, fixIf)
 			for k, j := range lines {
 				if !j.skip {
 					got += j.String()
@@ -282,7 +282,7 @@ func foo() {
 				}
 			}
 			if diff := cmp.Diff(l.want, got); diff != "" {
-				t.Fatalf("fixCondition mismatch (-want +got):\n%s", diff)
+				t.Fatalf("fixIf mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

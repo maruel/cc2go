@@ -565,10 +565,8 @@ func processArg(a string) (string, error) {
 
 //
 
-// fixCondition does two things:
-//  - Fix one liners.
-//  - Remove the extra parenthesis.
-func fixCondition(lines []Line) []Line {
+// fixInsideFuncs calls within with the block inside a function.
+func fixInsideFuncs(lines []Line, within func([]Line) []Line) []Line {
 	var out []Line
 	for i := 0; i < len(lines); i++ {
 		l := lines[i]
@@ -585,19 +583,7 @@ func fixCondition(lines []Line) []Line {
 			// Append the function.
 			out = append(out, l)
 			if i+1 < end {
-				/*
-					// Everything within.
-					for x := i + 1; x < end; x++ {
-						log.Printf("FUNC IS: %s\n", lines[x].String())
-					}
-				*/
-				more := fixConditionFunc(lines[i+1 : end])
-				/*
-					for x := range more {
-						log.Printf("RESULT : %s\n", more[x].String())
-					}
-				*/
-				out = append(out, more...)
+				out = append(out, within(lines[i+1:end])...)
 				// And the trailing line, if applicable.
 				out = append(out, lines[end])
 				i = end
@@ -609,14 +595,17 @@ func fixCondition(lines []Line) []Line {
 	return out
 }
 
-// fixConditionFunc handles one function.
-func fixConditionFunc(lines []Line) []Line {
-	//log.Printf("fixConditionFunc(%s)", lines[0].String())
+//
+
+// fixIf does two things:
+//  - Fix one liners.
+//  - Remove the extra parenthesis.
+func fixIf(lines []Line) []Line {
 	var out []Line
 	for i := 0; i < len(lines); {
 		// Process "one line" at a time. The line can read multiple lines if it's a
 		// oneliner condition.
-		j, more := fixConditionOneline(lines[i:])
+		j, more := fixIfOneline(lines[i:])
 		i += j
 		out = append(out, more...)
 	}
@@ -655,15 +644,13 @@ func cleanCond(cond string) (string, string) {
 		// if (!foo.empty())
 		cond = "len(" + cond[1:len(cond)-len(".empty()")] + ") != 0"
 	}
-	//log.Printf("cleanCond() = %q, %q", cond, rest)
 	return cond, rest
 }
 
-// fixConditionOneline handles one line or more lines if a one liner is found.
+// fixIfOneline handles one line or more lines if a one liner is found.
 //
 // It returns the number of lines consumed and the corresponding output.
-func fixConditionOneline(lines []Line) (int, []Line) {
-	//log.Printf("fixConditionOneline(%s)", lines[0].String())
+func fixIfOneline(lines []Line) (int, []Line) {
 	l := lines[0]
 	if strings.HasPrefix(l.code, "if (") {
 		// Trim the very first and very last parenthesis. There can be inside due
@@ -676,11 +663,11 @@ func fixConditionOneline(lines []Line) (int, []Line) {
 			j := 0
 			var more []Line
 			if rest == "" {
-				j, more = fixConditionOneliner(l.indent, lines[1:], false)
+				j, more = fixIfOneliner(l.indent, lines[1:], false)
 				j++
 			} else {
 				// Inject rest as a statement.
-				j, more = fixConditionOneliner(l.indent, append([]Line{{indent: l.indent + "\t", code: rest}}, lines[1:]...), false)
+				j, more = fixIfOneliner(l.indent, append([]Line{{indent: l.indent + "\t", code: rest}}, lines[1:]...), false)
 			}
 			return j, append([]Line{l}, more...)
 		}
@@ -696,11 +683,11 @@ func fixConditionOneline(lines []Line) (int, []Line) {
 			j := 0
 			var more []Line
 			if rest == "" {
-				j, more = fixConditionOneliner(l.indent, lines[1:], false)
+				j, more = fixIfOneliner(l.indent, lines[1:], false)
 				j++
 			} else {
 				// Inject rest as a statement.
-				j, more = fixConditionOneliner(l.indent, append([]Line{{indent: l.indent + "\t", code: rest}}, lines[1:]...), false)
+				j, more = fixIfOneliner(l.indent, append([]Line{{indent: l.indent + "\t", code: rest}}, lines[1:]...), false)
 			}
 			return j, append([]Line{l}, more...)
 		}
@@ -709,7 +696,7 @@ func fixConditionOneline(lines []Line) (int, []Line) {
 		// One liner?
 		if !strings.HasSuffix(l.code, "{") {
 			l.code += " {"
-			j, more := fixConditionOneliner(l.indent, lines[1:], true)
+			j, more := fixIfOneliner(l.indent, lines[1:], true)
 			return 1 + j, append([]Line{l}, more...)
 		}
 	}
@@ -717,19 +704,18 @@ func fixConditionOneline(lines []Line) (int, []Line) {
 	return 1, []Line{l}
 }
 
-// fixConditionOneliner fixes a one liner.
+// fixIfOneliner fixes a one liner.
 //
 // One liners can be embedded into each other, which makes it a bit tricky to
 // process.
-func fixConditionOneliner(indent string, lines []Line, isElse bool) (int, []Line) {
-	//log.Printf("fixConditionOneliner(%s)", lines[0].String())
-	i, out := fixConditionOneline(lines)
+func fixIfOneliner(indent string, lines []Line, isElse bool) (int, []Line) {
+	i, out := fixIfOneline(lines)
 
 	// Special case else, but only if it was a if.
 	if !isElse && i < len(lines) && strings.HasPrefix(lines[i].code, "else") {
 		l := lines[i]
 		l.code = "} " + l.code
-		j, more := fixConditionOneline(append([]Line{l}, lines[i+1:]...))
+		j, more := fixIfOneline(append([]Line{l}, lines[i+1:]...))
 		return i + j, append(out, more...)
 	}
 	return i, append(out, Line{indent: indent, code: "}"})
@@ -737,17 +723,191 @@ func fixConditionOneliner(indent string, lines []Line, isElse bool) (int, []Line
 
 //
 
-func fixLoops(lines []Line) []Line {
-	// TODO(maruel): fixLoops to fix for and convert while to for.
-	return lines
+// fixWhile does two things:
+//  - Fix one liners.
+//  - Remove the extra parenthesis.
+func fixWhile(lines []Line) []Line {
+	var out []Line
+	for i := 0; i < len(lines); {
+		// Process "one line" at a time. The line can read multiple lines if it's a
+		// oneliner condition.
+		j, more := fixWhileOneline(lines[i:])
+		i += j
+		out = append(out, more...)
+	}
+	return out
+}
+
+// fixWhileOneline handles one line or more lines if a one liner is found.
+//
+// It returns the number of lines consumed and the corresponding output.
+func fixWhileOneline(lines []Line) (int, []Line) {
+	l := lines[0]
+	if strings.HasPrefix(l.code, "while (") {
+		// Trim the very first and very last parenthesis. There can be inside due
+		// to function calls.
+		cond, rest := cleanCond(l.code[len("while ("):])
+		l.code = "while " + cond + " {"
+
+		// One liner?
+		if rest != "{" {
+			j := 0
+			var more []Line
+			if rest == "" {
+				j, more = fixWhileOneliner(l.indent, lines[1:])
+				j++
+			} else {
+				// Inject rest as a statement.
+				j, more = fixWhileOneliner(l.indent, append([]Line{{indent: l.indent + "\t", code: rest}}, lines[1:]...))
+			}
+			return j, append([]Line{l}, more...)
+		}
+	}
+
+	return 1, []Line{l}
+}
+
+// fixWhileOneliner fixes a one liner.
+//
+// One liners can be embedded into each other, which makes it a bit tricky to
+// process.
+func fixWhileOneliner(indent string, lines []Line) (int, []Line) {
+	i, out := fixWhileOneline(lines)
+	return i, append(out, Line{indent: indent, code: "}"})
+}
+
+//
+
+// fixFor does two things:
+//  - Fix one liners.
+//  - Remove the extra parenthesis.
+func fixFor(lines []Line) []Line {
+	var out []Line
+	for i := 0; i < len(lines); {
+		// Process "one line" at a time. The line can read multiple lines if it's a
+		// oneliner condition.
+		j, more := fixForOneline(lines[i:])
+		i += j
+		out = append(out, more...)
+	}
+	return out
+}
+
+// fixForOneline handles one line or more lines if a one liner is found.
+//
+// It returns the number of lines consumed and the corresponding output.
+func fixForOneline(lines []Line) (int, []Line) {
+	l := lines[0]
+	if strings.HasPrefix(l.code, "for (") {
+		// Trim the very first and very last parenthesis. There can be inside due
+		// to function calls.
+		cond, rest := cleanForParams(l.code[len("for ("):])
+		l.code = "for " + cond + " {"
+
+		// One liner?
+		if rest != "{" {
+			j := 0
+			var more []Line
+			if rest == "" {
+				j, more = fixForOneliner(l.indent, lines[1:])
+				j++
+			} else {
+				// Inject rest as a statement.
+				j, more = fixForOneliner(l.indent, append([]Line{{indent: l.indent + "\t", code: rest}}, lines[1:]...))
+			}
+			return j, append([]Line{l}, more...)
+		}
+	}
+
+	return 1, []Line{l}
+}
+
+var (
+	// e.g. "vector<Node*>::iterator out_node = (*e).outputs_.begin()"
+	reAssignment = regexp.MustCompile(`^([a-zA-Z0-9 \*,<>_:&\[\]]+) ([a-zA-Z0-9_\*]+) = ([a-zA-Z0-9 \*,<>\._:&\[\]()]+);$`)
+)
+
+// cleanForParams takes the for parameters and returns the cleaned version and
+// the rest.
+func cleanForParams(cond string) (string, string) {
+	i := 0
+	count := 1
+	for ; count != 0 && i < len(cond); i++ {
+		if cond[i] == '(' {
+			count++
+		} else if cond[i] == ')' {
+			count--
+		}
+	}
+	rest := strings.TrimSpace(cond[i:])
+	cond = cond[:i-1]
+
+	parts := strings.SplitN(cond, ";", 3)
+	if len(parts) != 3 {
+		panic(cond)
+	}
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+
+	if m := reAssignment.FindStringSubmatch(parts[0] + ";"); m != nil {
+		// Ignore type.
+		parts[0] = m[2] + " := " + m[3]
+	}
+
+	if strings.HasPrefix(parts[2], "++") {
+		parts[2] = parts[2][2:] + "++"
+	} else if strings.HasPrefix(parts[2], "--") {
+		parts[2] = parts[2][2:] + "--"
+	}
+
+	return strings.Join(parts, "; "), rest
+}
+
+// fixForOneliner fixes a one liner.
+//
+// One liners can be embedded into each other, which makes it a bit tricky to
+// process.
+func fixForOneliner(indent string, lines []Line) (int, []Line) {
+	i, out := fixForOneline(lines)
+	return i, append(out, Line{indent: indent, code: "}"})
+}
+
+//
+
+// fixAssignments converts all assignments in a block.
+func fixAssignments(lines []Line) []Line {
+	var out []Line
+	for _, l := range lines {
+		if m := reAssignment.FindStringSubmatch(l.code); m != nil {
+			// Ignore type.
+			if strings.HasPrefix(m[2], "*") {
+				// Pointer type can be touching the variable name.
+				m[2] = m[2][1:]
+			}
+			l.code = m[2] + " := " + m[3]
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+//
+
+func fixClear(lines []Line) []Line {
+	var out []Line
+	for _, l := range lines {
+		if strings.HasSuffix(l.code, ".clear();") {
+			l.code = l.code[:len(l.code)-len(".clear();")] + " = nil"
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 //
 
 var (
-	// e.g. "foo bar = baz();"
-	reAssignment = regexp.MustCompile(`^(\s*)[a-zA-Z<>\*:&]+ ([a-zA-Z_]+ )=( .+;)$`)
-
 	reAssert          = regexp.MustCompile(`^assert\((.+)\);$`)
 	reGoogleTestEQ    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_EQ\(([^,]+), (.+)\);$`)
 	reGoogleTestNE    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_NE\(([^,]+), (.+)\);$`)
@@ -759,49 +919,28 @@ var (
 	reGoogleTestFalse = regexp.MustCompile(`^(?:ASSERT|EXPECT)_FALSE\((.+)\);$`)
 )
 
-// fixStatements handles statements inside a function.
-func fixStatements(lines []Line) []Line {
-	// TODO(maruel): Ensure the code cannot be inside nested functions. The
-	// code base we process do not use this.
-
-	// TODO(maruel): Constructor, destructor.
-	// Remove const
-	// Change ++p to p++
-	//addThisPointer(out)
-	insideBlock := 0
+// fixAsserts handles asserts inside a function.
+func fixAsserts(lines []Line) []Line {
 	var out []Line
-	for i, l := range lines {
-		was := insideBlock
-		insideBlock += countBrackets(l.code)
-		if insideBlock < 0 {
-			fmt.Fprintf(os.Stderr, "ERROR fixStatements: %d: %s\n", i, l.String())
-		}
-		if was > 0 {
-			// Process a statement.
-			if strings.HasSuffix(l.code, ".clear();") {
-				l.code = l.code[:len(l.code)-len(".clear();")] + " = nil"
-			} else if m := reAssignment.FindStringSubmatch(l.code); m != nil {
-				//Convert "foo bar = baz();" to "bar := baz();"
-				l.code = m[1] + m[2] + ":=" + m[3]
-			} else if m := reAssert.FindStringSubmatch(l.code); m != nil {
-				l.code = "if !" + m[1] + " { panic(\"oops\") }"
-			} else if m := reGoogleTestEQ.FindStringSubmatch(l.code); m != nil {
-				l.code = "if " + m[1] + " != " + m[2] + " { t.FailNow() }"
-			} else if m := reGoogleTestNE.FindStringSubmatch(l.code); m != nil {
-				l.code = "if " + m[1] + " == " + m[2] + " { t.FailNow() }"
-			} else if m := reGoogleTestGT.FindStringSubmatch(l.code); m != nil {
-				l.code = "if " + m[1] + " <= " + m[2] + " { t.FailNow() }"
-			} else if m := reGoogleTestGE.FindStringSubmatch(l.code); m != nil {
-				l.code = "if " + m[1] + " < " + m[2] + " { t.FailNow() }"
-			} else if m := reGoogleTestLT.FindStringSubmatch(l.code); m != nil {
-				l.code = "if " + m[1] + " >= " + m[2] + " { t.FailNow() }"
-			} else if m := reGoogleTestLE.FindStringSubmatch(l.code); m != nil {
-				l.code = "if " + m[1] + " > " + m[2] + " { t.FailNow() }"
-			} else if m := reGoogleTestTrue.FindStringSubmatch(l.code); m != nil {
-				l.code = "if " + m[1] + " { t.FailNow() }"
-			} else if m := reGoogleTestFalse.FindStringSubmatch(l.code); m != nil {
-				l.code = "if !" + m[1] + " { t.FailNow() }"
-			}
+	for _, l := range lines {
+		if m := reAssert.FindStringSubmatch(l.code); m != nil {
+			l.code = "if !" + m[1] + " { panic(\"oops\") }"
+		} else if m := reGoogleTestEQ.FindStringSubmatch(l.code); m != nil {
+			l.code = "if " + m[1] + " != " + m[2] + " { t.FailNow() }"
+		} else if m := reGoogleTestNE.FindStringSubmatch(l.code); m != nil {
+			l.code = "if " + m[1] + " == " + m[2] + " { t.FailNow() }"
+		} else if m := reGoogleTestGT.FindStringSubmatch(l.code); m != nil {
+			l.code = "if " + m[1] + " <= " + m[2] + " { t.FailNow() }"
+		} else if m := reGoogleTestGE.FindStringSubmatch(l.code); m != nil {
+			l.code = "if " + m[1] + " < " + m[2] + " { t.FailNow() }"
+		} else if m := reGoogleTestLT.FindStringSubmatch(l.code); m != nil {
+			l.code = "if " + m[1] + " >= " + m[2] + " { t.FailNow() }"
+		} else if m := reGoogleTestLE.FindStringSubmatch(l.code); m != nil {
+			l.code = "if " + m[1] + " > " + m[2] + " { t.FailNow() }"
+		} else if m := reGoogleTestTrue.FindStringSubmatch(l.code); m != nil {
+			l.code = "if " + m[1] + " { t.FailNow() }"
+		} else if m := reGoogleTestFalse.FindStringSubmatch(l.code); m != nil {
+			l.code = "if !" + m[1] + " { t.FailNow() }"
 		}
 		out = append(out, l)
 	}
@@ -856,13 +995,17 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = mergeParenthesis(lines)
 	lines = processFunctionDeclaration(lines, doc)
 	lines = processFunctionImplementation(lines, doc)
-	lines = fixCondition(lines)
-	lines = fixLoops(lines)
-	lines = fixStatements(lines)
-
-	//Comment assert()
-	//Convert enum
-	//Comment out namespace
+	lines = fixInsideFuncs(lines, fixIf)
+	lines = fixInsideFuncs(lines, fixWhile)
+	lines = fixInsideFuncs(lines, fixFor)
+	lines = fixInsideFuncs(lines, fixAssignments)
+	lines = fixInsideFuncs(lines, fixClear)
+	lines = fixInsideFuncs(lines, fixAsserts)
+	// TODO(maruel): Constructor, destructor.
+	// Remove const
+	// Change ++p to p++
+	// addThisPointer(out)
+	// Convert enum
 
 	// At the very end, remove the trailing ";".
 	// Skip consecutive empty lines.
