@@ -58,11 +58,20 @@ func joinLines(prefix string, lines []Line) string {
 
 // Phase 1
 
+const (
+	// symbolSimple is a symbol that cannot be a template "std::set<int>" or
+	// subtype "Foo:BAR".
+	symbolSimple = `[A-Za-z][A-Za-z0-9_]*`
+	// complexType is a type that can be a template "std::map<int, std::string>"
+	// or subtype "Foo:BAR".
+	complexType = `[A-Za-z][A-Za-z0-9_:<>, *&[\]]*[A-Za-z0-9_>*&\]]+`
+)
+
 var (
 	// Used in phase 1
 
 	// e.g. "struct Foo;"
-	reForwardStruct = regexp.MustCompile(`^struct [A-Za-z]+;$`)
+	reForwardStruct = regexp.MustCompile(`^struct ` + symbolSimple + `;$`)
 	// e.g. "protected:"
 	reStructAccess = regexp.MustCompile(`^(public|protected|private):$`)
 	// A string.
@@ -226,7 +235,7 @@ func commentNamespace(lines []Line) []Line {
 
 //
 
-var reStructDefinition = regexp.MustCompile(`^struct ([A-Za-z]+)(.+)$`)
+var reStructDefinition = regexp.MustCompile(`^struct (` + symbolSimple + `)(.+)$`)
 
 // processStructDefinition rewrites the structs.
 func processStructDefinition(lines []Line) []Line {
@@ -294,11 +303,11 @@ func mergeParenthesis(lines []Line) []Line {
 //
 
 var (
-	reGoStruct               = regexp.MustCompile(`^type ([a-zA-Z0-9_]+) struct {$`)
-	reConstructorDeclaration = regexp.MustCompile(`^([A-Za-z_0-9]+)\s?\([a-zA-Z *,=<>_:&\[\]]*\);$`)
+	reGoStruct               = regexp.MustCompile(`^type (` + symbolSimple + `) struct {$`)
+	reConstructorDeclaration = regexp.MustCompile(`^(` + symbolSimple + `)\s?\([a-zA-Z *,=<>_:&\[\]]*\);$`)
 	// e.g. "void bar();" or "virtual void bar() const = 0;"
 	// 1 is return type, 2 is name.
-	reFuncDeclaration = regexp.MustCompile(`^(?:virtual |)([a-zA-Z0-9<>*]+)\s+([A-Za-z_0-9]+)\s?\(([a-zA-Z0-9 *,=<>_:&\[\]]*)\)(?: const|)\s*(?:= 0|)\s*;$`)
+	reFuncDeclaration = regexp.MustCompile(`^(?:virtual |static |)(` + complexType + `)\s+(` + symbolSimple + `)\s?\(([a-zA-Z0-9 *,=<>_:&\[\]]*)\)(?: const|)\s*(?:= 0|)\s*;$`)
 )
 
 // processFunctionDeclaration comments out forward declarations, grabbing
@@ -376,11 +385,11 @@ func getID(structName, funcName string) string {
 
 var (
 	// 1 is return type, 2 is name, 3 is args, 4 is brackets
-	reFuncImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z0-9<>*]+)\s+([A-Za-z_0-9]+)\s?\(([a-zA-Z0-9 *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
+	reFuncImplementation = regexp.MustCompile(`^(?:virtual |static |)(` + complexType + `)\s+(` + symbolSimple + `)\s?\(([a-zA-Z0-9 *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
 	// 1 is return type, 2 is class, 3 is name, 4 is args, 5 is brackets
-	reMethodImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z0-9<>*]+)\s+([A-Za-z_0-9]+)::([A-Za-z_0-9]+)\s?\(([a-zA-Z0-9 *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
+	reMethodImplementation = regexp.MustCompile(`^(?:virtual |static |)(` + complexType + `)\s+(` + symbolSimple + `)::(` + symbolSimple + `)\s?\(([a-zA-Z0-9 *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
 	// e.g. "TEST_F(DepfileParserTest, Continuation) {"
-	reGoogleTestfunc = regexp.MustCompile(`^TEST(?:|_F)\(([a-zA-Z]+), ([a-zA-Z]+)\) {$`)
+	reGoogleTestfunc = regexp.MustCompile(`^TEST(?:|_F)\((` + symbolSimple + `), (` + symbolSimple + `)\) {$`)
 )
 
 // processFunctionImplementation handles function implementations.
@@ -958,7 +967,7 @@ func fixForOneline(lines []Line) (int, []Line) {
 
 var (
 	// e.g. "vector<Node*>::iterator out_node = (*e).outputs_.begin()"
-	reAssignment = regexp.MustCompile(`^([a-zA-Z0-9 \*,<>_:&\[\]]+) ([a-zA-Z0-9_\*]+) = ([a-zA-Z0-9 \*,<>\._:&\[\]()]+);$`)
+	reAssignment = regexp.MustCompile(`^(` + complexType + `) (\*?` + symbolSimple + `) = ([a-zA-Z0-9 \*,<>\._:&\[\]()]+);$`)
 )
 
 // cleanForParams takes the for parameters and returns the cleaned version and
@@ -1098,14 +1107,14 @@ func fixAsserts(lines []Line) []Line {
 }
 
 var (
-	reVariable = regexp.MustCompile(`^([a-zA-Z0-9*_]+) ([a-zA-Z0-9*_]+);$`)
+	reVariable = regexp.MustCompile(`^(?:const |struct |)(` + complexType + `) (\*?` + symbolSimple + `);$`)
 )
 
 func fixVariables(lines []Line) []Line {
 	var out []Line
 	for _, l := range lines {
 		if m := reVariable.FindStringSubmatch(l.code); m != nil {
-			if strings.HasSuffix(m[1], "*") {
+			if strings.HasSuffix(m[1], "*") || strings.HasSuffix(m[1], "&") {
 				m[1] = "*" + m[1][:len(m[1])-1]
 			}
 			switch m[1] {
@@ -1182,7 +1191,7 @@ func fixMembers(lines []Line) []Line {
 	var out []Line
 	for _, l := range lines {
 		if m := reVariable.FindStringSubmatch(l.code); m != nil {
-			if strings.HasSuffix(m[1], "*") {
+			if strings.HasSuffix(m[1], "*") || strings.HasSuffix(m[1], "&") {
 				m[1] = "*" + m[1][:len(m[1])-1]
 			}
 			switch m[1] {
