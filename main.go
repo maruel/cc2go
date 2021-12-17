@@ -483,13 +483,13 @@ func rewriteFunc(structName, funcName, args, ret, rest string) string {
 		if ret == "" {
 			return "func " + funcName + "(" + args + ") " + rest
 		}
-		return "func " + funcName + "(" + args + ") " + ret + " " + rest
+		return "func " + funcName + "(" + args + ") " + reduceComplexType(ret) + " " + rest
 	}
 	receiver := strings.ToLower(structName[:1])
 	if ret == "" {
 		return "func (" + receiver + " *" + structName + ") " + funcName + "(" + args + ") " + rest
 	}
-	return "func (" + receiver + " *" + structName + ") " + funcName + "(" + args + ") " + ret + " " + rest
+	return "func (" + receiver + " *" + structName + ") " + funcName + "(" + args + ") " + reduceComplexType(ret) + " " + rest
 }
 
 // processArgs process the arguments in a function declaration.
@@ -551,11 +551,8 @@ func processArg(a string) (string, error) {
 		return a, nil
 		//return "", fmt.Errorf("failed to process argument %q", a)
 	}
-	t := a[:c]
+	t := reduceComplexType(a[:c])
 	n := a[c+1:]
-	for strings.HasSuffix(t, "*") {
-		t = "*" + t[:len(t)-1]
-	}
 	for strings.HasPrefix(n, "*") {
 		n = n[1:]
 		t = "*" + t
@@ -564,21 +561,6 @@ func processArg(a string) (string, error) {
 		n = n[:len(n)-2]
 		t = "[]" + t
 	}
-	t = strings.TrimPrefix(t, "const ")
-	if strings.HasSuffix(t, "&") {
-		t = "*" + strings.TrimSpace(t[:len(t)-1])
-	}
-
-	/* TODO(maruel): Skip for now because it doesn't behave well with pointers.
-	for found := true; found; found = false {
-		// Convert "vector<foo>" to "[]foo".
-		if c := strings.Index(t, "vector<"); c != -1 {
-			t = t[:c] + "[]" + t[c+len("vector<"):len(t)-1]
-			found = true
-		}
-		// TODO(maruel): Convert "set<foo>" to "map[foo]struct{}"
-	}
-	*/
 	return n + " " + t, nil
 }
 
