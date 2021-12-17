@@ -75,7 +75,8 @@ var (
 	// e.g. "protected:"
 	reStructAccess = regexp.MustCompile(`^(public|protected|private):$`)
 	// A string.
-	reConstChar = regexp.MustCompile(`const char\s?\*`)
+	reConstChar   = regexp.MustCompile(`const char\s?\*`)
+	reStringPiece = regexp.MustCompile(`\bStringPiece\b`)
 
 	asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
 )
@@ -131,6 +132,7 @@ func processLine(l string) Line {
 	out.code = strings.ReplaceAll(out.code, "->", ".")
 	out.code = strings.ReplaceAll(out.code, "NULL", "nil")
 	out.code = reConstChar.ReplaceAllString(out.code, "string")
+	out.code = reStringPiece.ReplaceAllString(out.code, "string")
 	return out
 }
 
@@ -1108,6 +1110,7 @@ func fixAsserts(lines []Line) []Line {
 
 var (
 	reVariable = regexp.MustCompile(`^(?:const |struct |)(` + complexType + `) (\*?` + symbolSimple + `);$`)
+	reVector   = regexp.MustCompile(`^vector<(` + complexType + `)>$`)
 )
 
 func fixVariables(lines []Line) []Line {
@@ -1116,6 +1119,16 @@ func fixVariables(lines []Line) []Line {
 		if m := reVariable.FindStringSubmatch(l.code); m != nil {
 			if strings.HasSuffix(m[1], "*") || strings.HasSuffix(m[1], "&") {
 				m[1] = "*" + m[1][:len(m[1])-1]
+			}
+			if n := reVector.FindStringSubmatch(m[1]); n != nil {
+				switch n[1] {
+				case "float":
+					n[1] = "float32"
+				}
+				if strings.HasSuffix(n[1], "*") {
+					n[1] = "*" + n[1][:len(n[1])-1]
+				}
+				m[1] = "[]" + n[1]
 			}
 			switch m[1] {
 			case "return":
