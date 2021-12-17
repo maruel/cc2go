@@ -5,7 +5,10 @@
 package main
 
 import (
+	"flag"
+	"io/ioutil"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -345,6 +348,24 @@ type Foo struct {
 			`,
 					},
 		*/
+		{
+			`
+type Foo struct {
+	int i;
+	type Bar struct {
+	}
+	int j;
+}
+`,
+			`
+type Foo struct {
+	int i;
+	int j;
+}
+	type Bar struct {
+	}
+`,
+		},
 		/*
 					{
 						`
@@ -387,6 +408,11 @@ type Foo struct {
 	}
 }
 
-func init() {
+func TestMain(m *testing.M) {
 	log.SetFlags(0)
+	flag.Parse()
+	if !testing.Verbose() {
+		log.SetOutput(ioutil.Discard)
+	}
+	os.Exit(m.Run())
 }

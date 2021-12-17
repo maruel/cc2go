@@ -48,6 +48,14 @@ func (l *Line) String() string {
 	return l.indent + l.code + l.comment
 }
 
+func joinLines(prefix string, lines []Line) string {
+	out := ""
+	for _, l := range lines {
+		out += prefix + l.String() + "\n"
+	}
+	return out
+}
+
 // Phase 1
 
 var (
@@ -597,10 +605,7 @@ func extractEmbedded(lines []Line) []Line {
 }
 
 func huntForEmbedded(lines []Line) ([]Line, []Line) {
-	log.Printf("huntForEmbedded")
-	for _, x := range lines {
-		log.Printf("- %s", x.String())
-	}
+	log.Printf("huntForEmbedded\n%s", joinLines("- ", lines))
 	var inner, outer []Line
 	for i := 0; i < len(lines); i++ {
 		l := lines[i]
@@ -637,6 +642,7 @@ func huntForEmbedded(lines []Line) ([]Line, []Line) {
 			} else if i+1 == end {
 				outer = append(outer, lines[end])
 				i = end
+			} else if i == end {
 			}
 			/*
 				} else if strings.HasPrefix(l.code, "func ") {
