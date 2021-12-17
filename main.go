@@ -59,8 +59,6 @@ var (
 	reStructAccess = regexp.MustCompile(`^(public|protected|private):$`)
 	// A string.
 	reConstChar = regexp.MustCompile(`const char\s?\*`)
-	// e.g. "void bar() const {"
-	reConstMethod = regexp.MustCompile(`^(.+)\) const {$`)
 
 	asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
 )
@@ -116,9 +114,6 @@ func processLine(l string) Line {
 	out.code = strings.ReplaceAll(out.code, "->", ".")
 	out.code = strings.ReplaceAll(out.code, "NULL", "nil")
 	out.code = reConstChar.ReplaceAllString(out.code, "string")
-	if reConstMethod.MatchString(out.code) {
-		out.code = reConstMethod.ReplaceAllString(out.code, "$1) {")
-	}
 	return out
 }
 
@@ -295,7 +290,7 @@ var (
 	reConstructorDeclaration = regexp.MustCompile(`^([A-Za-z_0-9]+)\s?\([a-zA-Z *,=<>_:&\[\]]*\);$`)
 	// e.g. "void bar();" or "virtual void bar() const = 0;"
 	// 1 is return type, 2 is name.
-	reFuncDeclaration = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)\s?\([a-zA-Z *,=<>_:&\[\]]*\)(?: const|)\s*(?:= 0|)\s*;$`)
+	reFuncDeclaration = regexp.MustCompile(`^(?:virtual |)([a-zA-Z0-9<>*]+)\s+([A-Za-z_0-9]+)\s?\(([a-zA-Z0-9 *,=<>_:&\[\]]*)\)(?: const|)\s*(?:= 0|)\s*;$`)
 )
 
 // processFunctionDeclaration comments out forward declarations, grabbing
@@ -329,17 +324,31 @@ func processFunctionDeclaration(lines []Line, doc map[string][]Line) []Line {
 		}
 		// It can both be a function if brackets == 0 or a method if brackets > 1.
 		if m := reFuncDeclaration.FindStringSubmatch(l.code); m != nil {
-			if m[1] == "return" {
-				// It's super annoying that "return Foo();" triggers but there's
-				// nothing to do but explicitly ignore.
-				continue
-			}
-			l.doSkip()
-			// Associate the function description if available.
-			for i := len(out) - 1; i >= 0 && out[i].code == "" && out[i].comment != ""; i-- {
-				n := getID(structName, m[2])
-				doc[n] = append([]Line{out[i]}, doc[n]...)
-				out[i].skip = true
+			// It's super annoying that "return Foo();" triggers but there's
+			// nothing to do but explicitly ignore.
+			if m[1] != "return" {
+				// The main difference between a function declaration and an
+				// implementation is that each argument has a type, so look for spaces.
+				// Templates are annoying,
+				spaces := true
+				if m[3] != "" {
+					spaces = false
+					for _, a := range strings.Split(m[3], ", ") {
+						if strings.Contains(a, " ") {
+							spaces = true
+							break
+						}
+					}
+				}
+				if spaces {
+					l.doSkip()
+					// Associate the function description if available.
+					for i := len(out) - 1; i >= 0 && out[i].code == "" && out[i].comment != ""; i-- {
+						n := getID(structName, m[2])
+						doc[n] = append([]Line{out[i]}, doc[n]...)
+						out[i].skip = true
+					}
+				}
 			}
 		}
 		out = append(out, l)
@@ -359,9 +368,9 @@ func getID(structName, funcName string) string {
 
 var (
 	// 1 is return type, 2 is name, 3 is args, 4 is brackets
-	reFuncImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
+	reFuncImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z0-9<>*]+)\s+([A-Za-z_0-9]+)\s?\(([a-zA-Z0-9 *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
 	// 1 is return type, 2 is class, 3 is name, 4 is args, 5 is brackets
-	reMethodImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z<>*]+)\s+([A-Za-z_0-9]+)::([A-Za-z_0-9]+)\s?\(([a-zA-Z *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
+	reMethodImplementation = regexp.MustCompile(`^(?:virtual |)([a-zA-Z0-9<>*]+)\s+([A-Za-z_0-9]+)::([A-Za-z_0-9]+)\s?\(([a-zA-Z0-9 *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
 	// e.g. "TEST_F(DepfileParserTest, Continuation) {"
 	reGoogleTestfunc = regexp.MustCompile(`^TEST(?:|_F)\(([a-zA-Z]+), ([a-zA-Z]+)\) {$`)
 )
@@ -740,6 +749,7 @@ var (
 	// e.g. "foo bar = baz();"
 	reAssignment = regexp.MustCompile(`^(\s*)[a-zA-Z<>\*:&]+ ([a-zA-Z_]+ )=( .+;)$`)
 
+	reAssert          = regexp.MustCompile(`^assert\((.+)\);$`)
 	reGoogleTestEQ    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_EQ\(([^,]+), (.+)\);$`)
 	reGoogleTestNE    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_NE\(([^,]+), (.+)\);$`)
 	reGoogleTestGT    = regexp.MustCompile(`^(?:ASSERT|EXPECT)_GT\(([^,]+), (.+)\);$`)
@@ -774,6 +784,8 @@ func fixStatements(lines []Line) []Line {
 			} else if m := reAssignment.FindStringSubmatch(l.code); m != nil {
 				//Convert "foo bar = baz();" to "bar := baz();"
 				l.code = m[1] + m[2] + ":=" + m[3]
+			} else if m := reAssert.FindStringSubmatch(l.code); m != nil {
+				l.code = "if !" + m[1] + " { panic(\"oops\") }"
 			} else if m := reGoogleTestEQ.FindStringSubmatch(l.code); m != nil {
 				l.code = "if " + m[1] + " != " + m[2] + " { t.FailNow() }"
 			} else if m := reGoogleTestNE.FindStringSubmatch(l.code); m != nil {
@@ -791,7 +803,6 @@ func fixStatements(lines []Line) []Line {
 			} else if m := reGoogleTestFalse.FindStringSubmatch(l.code); m != nil {
 				l.code = "if !" + m[1] + " { t.FailNow() }"
 			}
-
 		}
 		out = append(out, l)
 	}
