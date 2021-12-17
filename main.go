@@ -286,7 +286,7 @@ func mergeParenthesis(lines []Line) []Line {
 //
 
 var (
-	reGoStruct               = regexp.MustCompile(`^type ([a-zA-Z]+) struct {$`)
+	reGoStruct               = regexp.MustCompile(`^type ([a-zA-Z0-9_]+) struct {$`)
 	reConstructorDeclaration = regexp.MustCompile(`^([A-Za-z_0-9]+)\s?\([a-zA-Z *,=<>_:&\[\]]*\);$`)
 	// e.g. "void bar();" or "virtual void bar() const = 0;"
 	// 1 is return type, 2 is name.
@@ -419,11 +419,8 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 			if err != nil {
 				panic(fmt.Sprintf("%s: %s", l.code, err))
 			}
-			if structName != "" {
-				// TODO(maruel): if structName != "", then move the function outside of
-				// the struct. This requires finding the last line containing the
-				// bracket, then moving the whole block out.
-			}
+			// Extracting a function method defined inlined will be handled in
+			// extractEmbedded later.
 			l.code = rewriteFunc(structName, funcName, args, m[1], m[4])
 			if d := doc[getID(structName, funcName)]; len(d) != 0 {
 				// Insert the doc there, updating the indentation.
@@ -564,6 +561,104 @@ func processArg(a string) (string, error) {
 	}
 	*/
 	return n + " " + t, nil
+}
+
+//
+
+// extractEmbedded extracts embedded structs, enum and methods from within a
+// struct.
+func extractEmbedded(lines []Line) []Line {
+	var out []Line
+	for i := 0; i < len(lines); i++ {
+		l := lines[i]
+		if reGoStruct.MatchString(l.code) {
+			// Find the end, and process this part only.
+			b := countBrackets(l.code)
+			end := i
+			for ; b > 0 && end < len(lines); end++ {
+				b += countBrackets(lines[end].code)
+			}
+			end -= 2
+			// Append the type declaration.
+			out = append(out, l)
+			if i+1 < end {
+				inner, outer := huntForEmbedded(lines[i+1 : end])
+				out = append(out, inner...)
+				// And the trailing line, if applicable.
+				out = append(out, lines[end])
+				out = append(out, outer...)
+				i = end
+			}
+		} else {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func huntForEmbedded(lines []Line) ([]Line, []Line) {
+	log.Printf("huntForEmbedded")
+	for _, x := range lines {
+		log.Printf("- %s", x.String())
+	}
+	var inner, outer []Line
+	for i := 0; i < len(lines); i++ {
+		l := lines[i]
+		if reGoStruct.MatchString(l.code) {
+			// Find the end, and process this part only.
+			b := countBrackets(l.code)
+			end := i
+			for ; b > 0 && end < len(lines); end++ {
+				b += countBrackets(lines[end].code)
+			}
+			end -= 2
+			// Append the type declaration.
+			//offset := l.indent
+			//l.indent = ""
+			outer = append(outer, l)
+			if i+1 < end {
+				// Recurse!
+				inner2, outer2 := huntForEmbedded(lines[i+1 : end])
+				for _, j := range inner2 {
+					//j.indent = ""
+					//j.indent = j.indent[len(offset):]
+					outer = append(outer, j)
+				}
+				// And the trailing line, if applicable.
+				m := lines[end]
+				//m.indent = ""
+				outer = append(outer, m)
+				for _, j := range outer2 {
+					//j.indent = ""
+					//j.indent = j.indent[len(offset):]
+					outer = append(outer, j)
+				}
+				i = end
+			} else if i+1 == end {
+				outer = append(outer, lines[end])
+				i = end
+			}
+			/*
+				} else if strings.HasPrefix(l.code, "func ") {
+					// Find the end, and process this part only.
+					b := countBrackets(l.code)
+					end := i
+					for ; b > 0 && end < len(lines); end++ {
+						b += countBrackets(lines[end].code)
+					}
+					end -= 2
+					// Append the function declaration.
+					outer = append(outer, l)
+					if i+1 < end {
+						outer = append(outer, lines[i+1:end+1]...)
+						i = end
+					}
+			*/
+		} else {
+			inner = append(inner, l)
+		}
+	}
+	return inner, outer
 }
 
 //
@@ -1006,16 +1101,12 @@ func fixVariables(lines []Line) []Line {
 
 //
 
-var (
-	reTypeStruct = regexp.MustCompile(`^type [a-zA-Z0-9_]+ struct {$`)
-)
-
 // fixInsideStructs calls within with the block inside a struct.
 func fixInsideStructs(lines []Line, within func([]Line) []Line) []Line {
 	var out []Line
 	for i := 0; i < len(lines); i++ {
 		l := lines[i]
-		if reTypeStruct.MatchString(l.code) {
+		if reGoStruct.MatchString(l.code) {
 			// Find the end, and process this part only.
 			b := countBrackets(l.code)
 			end := i
@@ -1023,7 +1114,7 @@ func fixInsideStructs(lines []Line, within func([]Line) []Line) []Line {
 				b += countBrackets(lines[end].code)
 			}
 			end -= 2
-			// Append the function.
+			// Append the type declaration.
 			out = append(out, l)
 			if i+1 < end {
 				out = append(out, within(lines[i+1:end])...)
@@ -1120,7 +1211,7 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = mergeParenthesis(lines)
 	lines = processFunctionDeclaration(lines, doc)
 	lines = processFunctionImplementation(lines, doc)
-	// TODO(maruel): Extract struct, enum and function defined within a struct.
+	// TODO(maruel): Broken, lines = extractEmbedded(lines)
 	lines = fixInsideFuncs(lines, fixIf)
 	lines = fixInsideFuncs(lines, fixWhile)
 	lines = fixInsideFuncs(lines, fixFor)
@@ -1167,7 +1258,7 @@ func process(pkg, outDir, inDir, root string, keepSkip bool) error {
 	}
 	doc := map[string][]Line{}
 	hdr1, c1 := load(filepath.Join(inDir, root+".h"), keepSkip, doc)
-	hdr2, c2 := load(filepath.Join(inDir, root+".cc"), keepSkip, doc)
+	hdr2, c2 := load(filepath.Join(inDir, root+".cc2"), keepSkip, doc)
 	out := hdr1
 	if hdr1 != hdr2 {
 		out += hdr2
