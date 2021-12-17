@@ -358,69 +358,75 @@ type Foo struct {
 		{
 			`
 type Foo struct {
+};
+`,
+			`
+type Foo struct {
+};
+`,
+		},
+		{
+			`
+type Foo struct {
 	int i
 	int j
-}
+};
 `,
 			`
 type Foo struct {
 	int i
 	int j
-}
+};
 `,
 		},
-		/*
-					{
-						`
-			type Foo struct {
-				type Bar struct {
-				}
-			}
-			`,
-						`
-			type Foo struct {
-			}
-				type Bar struct {
-				}
-			`,
-					},
-		*/
+		{
+			`
+type Foo struct {
+	type Bar struct {
+	};
+};
+`,
+			`
+type Foo struct {
+};
+	type Bar struct {
+	};
+`,
+		},
 		{
 			`
 type Foo struct {
 	int i;
 	type Bar struct {
-	}
+	};
 	int j;
-}
+};
 `,
 			`
 type Foo struct {
 	int i;
 	int j;
-}
+};
 	type Bar struct {
+	};
+`,
+		},
+		{
+			`
+type Foo struct {
+	func foo() {
+		bar();
+	}
+};
+`,
+			`
+type Foo struct {
+};
+	func foo() {
+		bar();
 	}
 `,
 		},
-		/*
-					{
-						`
-			type Foo struct {
-				func foo() {
-					bar();
-				}
-			}
-			`,
-						`
-			type Foo struct {
-			}
-				func foo() {
-					bar();
-				}
-			`,
-					},
-		*/
 	}
 	for i, l := range data {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {

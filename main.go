@@ -575,20 +575,29 @@ func processArg(a string) (string, error) {
 
 // extractEmbedded extracts embedded structs, enum and methods from within a
 // struct.
+//
+// It is different than fixInsideStructs below that here it extract content
+// from the struct.
 func extractEmbedded(lines []Line) []Line {
+	//log.Printf("extractEmbedded\n%s", joinLines("- ", lines))
 	var out []Line
 	for i := 0; i < len(lines); i++ {
-		l := lines[i]
-		if reGoStruct.MatchString(l.code) {
+		if reGoStruct.MatchString(lines[i].code) {
+			// Grab the documentation too.
+			start := i
+			for ; start >= 0 && lines[start].code == "" && strings.HasPrefix(lines[start].comment, "//"); start-- {
+			}
 			// Find the end, and process this part only.
-			b := countBrackets(l.code)
-			end := i
+			b := countBrackets(lines[i].code)
+			end := i + 1
 			for ; b > 0 && end < len(lines); end++ {
 				b += countBrackets(lines[end].code)
 			}
-			end -= 2
-			// Append the type declaration.
-			out = append(out, l)
+			end -= 1
+			// Append the type declaration and its documentation.
+			for x := start; x <= i; x++ {
+				out = append(out, lines[x])
+			}
 			if i+1 < end {
 				inner, outer := huntForEmbedded(lines[i+1 : end])
 				out = append(out, inner...)
@@ -596,72 +605,89 @@ func extractEmbedded(lines []Line) []Line {
 				out = append(out, lines[end])
 				out = append(out, outer...)
 				i = end
+			} else if i+1 == end {
+				// And the trailing line, if applicable.
+				if !strings.HasSuffix(lines[end].code, "}") && !strings.HasSuffix(lines[end].code, "};") {
+					panic(lines[end].String())
+				}
+				out = append(out, lines[end])
+				i = end
+			} else {
+				panic(end)
 			}
 		} else {
-			out = append(out, l)
+			out = append(out, lines[i])
 		}
 	}
 	return out
 }
 
 func huntForEmbedded(lines []Line) ([]Line, []Line) {
-	log.Printf("huntForEmbedded\n%s", joinLines("- ", lines))
+	//log.Printf("huntForEmbedded\n%s", joinLines("- ", lines))
 	var inner, outer []Line
 	for i := 0; i < len(lines); i++ {
-		l := lines[i]
-		if reGoStruct.MatchString(l.code) {
+		if reGoStruct.MatchString(lines[i].code) {
+			// Grab the documentation too.
+			start := i
+			for ; start >= 0 && lines[start].code == "" && strings.HasPrefix(lines[start].comment, "//"); start-- {
+			}
 			// Find the end, and process this part only.
-			b := countBrackets(l.code)
-			end := i
+			b := countBrackets(lines[i].code)
+			end := i + 1
 			for ; b > 0 && end < len(lines); end++ {
 				b += countBrackets(lines[end].code)
 			}
-			end -= 2
-			// Append the type declaration.
-			//offset := l.indent
-			//l.indent = ""
-			outer = append(outer, l)
+			end -= 1
+			// Append the type declaration and its documentation.
+			//offset := lines[start].indent
+			for x := start; x <= i; x++ {
+				outer = append(outer, lines[x])
+			}
 			if i+1 < end {
 				// Recurse!
 				inner2, outer2 := huntForEmbedded(lines[i+1 : end])
 				for _, j := range inner2 {
-					//j.indent = ""
-					//j.indent = j.indent[len(offset):]
 					outer = append(outer, j)
 				}
 				// And the trailing line, if applicable.
 				m := lines[end]
-				//m.indent = ""
 				outer = append(outer, m)
 				for _, j := range outer2 {
-					//j.indent = ""
-					//j.indent = j.indent[len(offset):]
 					outer = append(outer, j)
 				}
 				i = end
 			} else if i+1 == end {
+				if !strings.HasSuffix(lines[end].code, "}") && !strings.HasSuffix(lines[end].code, "};") {
+					panic(lines[end].String())
+				}
 				outer = append(outer, lines[end])
 				i = end
 			} else if i == end {
+				panic(end)
 			}
-			/*
-				} else if strings.HasPrefix(l.code, "func ") {
-					// Find the end, and process this part only.
-					b := countBrackets(l.code)
-					end := i
-					for ; b > 0 && end < len(lines); end++ {
-						b += countBrackets(lines[end].code)
-					}
-					end -= 2
-					// Append the function declaration.
-					outer = append(outer, l)
-					if i+1 < end {
-						outer = append(outer, lines[i+1:end+1]...)
-						i = end
-					}
-			*/
+		} else if strings.HasPrefix(lines[i].code, "func ") {
+			// Grab the documentation too.
+			start := i
+			for ; start >= 0 && lines[start].code == "" && strings.HasPrefix(lines[start].comment, "//"); start-- {
+			}
+			// Find the end, and process this part only.
+			b := countBrackets(lines[i].code)
+			end := i + 1
+			for ; b > 0 && end < len(lines); end++ {
+				b += countBrackets(lines[end].code)
+			}
+			end -= 1
+			// Append the function implementation and its documentation.
+			//offset := lines[start].indent
+			for x := start; x <= i; x++ {
+				outer = append(outer, lines[x])
+			}
+			if i+1 < end {
+				outer = append(outer, lines[i+1:end+1]...)
+				i = end
+			}
 		} else {
-			inner = append(inner, l)
+			inner = append(inner, lines[i])
 		}
 	}
 	return inner, outer
@@ -679,15 +705,19 @@ func fixInsideFuncs(lines []Line, within func([]Line) []Line) []Line {
 		if strings.HasPrefix(l.code, "func ") {
 			// Find the end, and process this part only.
 			b := countBrackets(l.code)
-			end := i
+			end := i + 1
 			for ; b > 0 && end < len(lines); end++ {
 				b += countBrackets(lines[end].code)
 			}
-			end -= 2
+			end -= 1
 			// Append the function.
 			out = append(out, l)
 			if i+1 < end {
 				out = append(out, within(lines[i+1:end])...)
+				// And the trailing line, if applicable.
+				out = append(out, lines[end])
+				i = end
+			} else if i+1 == end {
 				// And the trailing line, if applicable.
 				out = append(out, lines[end])
 				i = end
@@ -1115,11 +1145,11 @@ func fixInsideStructs(lines []Line, within func([]Line) []Line) []Line {
 		if reGoStruct.MatchString(l.code) {
 			// Find the end, and process this part only.
 			b := countBrackets(l.code)
-			end := i
+			end := i + 1
 			for ; b > 0 && end < len(lines); end++ {
 				b += countBrackets(lines[end].code)
 			}
-			end -= 2
+			end -= 1
 			// Append the type declaration.
 			out = append(out, l)
 			if i+1 < end {
@@ -1127,6 +1157,15 @@ func fixInsideStructs(lines []Line, within func([]Line) []Line) []Line {
 				// And the trailing line, if applicable.
 				out = append(out, lines[end])
 				i = end
+			} else if i+1 == end {
+				// And the trailing line, if applicable.
+				if !strings.HasSuffix(lines[end].code, "}") && !strings.HasSuffix(lines[end].code, "};") {
+					panic(lines[end].String())
+				}
+				out = append(out, lines[end])
+				i = end
+			} else {
+				panic(end)
 			}
 		} else {
 			out = append(out, l)
@@ -1217,7 +1256,7 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = mergeParenthesis(lines)
 	lines = processFunctionDeclaration(lines, doc)
 	lines = processFunctionImplementation(lines, doc)
-	// TODO(maruel): Broken, lines = extractEmbedded(lines)
+	lines = extractEmbedded(lines)
 	lines = fixInsideFuncs(lines, fixIf)
 	lines = fixInsideFuncs(lines, fixWhile)
 	lines = fixInsideFuncs(lines, fixFor)
@@ -1264,7 +1303,7 @@ func process(pkg, outDir, inDir, root string, keepSkip bool) error {
 	}
 	doc := map[string][]Line{}
 	hdr1, c1 := load(filepath.Join(inDir, root+".h"), keepSkip, doc)
-	hdr2, c2 := load(filepath.Join(inDir, root+".cc2"), keepSkip, doc)
+	hdr2, c2 := load(filepath.Join(inDir, root+".cc"), keepSkip, doc)
 	out := hdr1
 	if hdr1 != hdr2 {
 		out += hdr2
