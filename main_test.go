@@ -409,7 +409,7 @@ type Foo struct {
 }
 
 func TestMain(m *testing.M) {
-	log.SetFlags(0)
+	log.SetFlags(log.Lshortfile)
 	flag.Parse()
 	if !testing.Verbose() {
 		log.SetOutput(ioutil.Discard)
