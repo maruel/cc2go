@@ -419,8 +419,11 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 			if err != nil {
 				panic(fmt.Sprintf("%s: %s", l.code, err))
 			}
-			// TODO(maruel): if structName != "", then move the function outside of
-			// the struct.
+			if structName != "" {
+				// TODO(maruel): if structName != "", then move the function outside of
+				// the struct. This requires finding the last line containing the
+				// bracket, then moving the whole block out.
+			}
 			l.code = rewriteFunc(structName, funcName, args, m[1], m[4])
 			if d := doc[getID(structName, funcName)]; len(d) != 0 {
 				// Insert the doc there, updating the indentation.
@@ -963,6 +966,100 @@ func fixAsserts(lines []Line) []Line {
 	return out
 }
 
+var (
+	reVariable = regexp.MustCompile(`^([a-zA-Z0-9*_]+) ([a-zA-Z0-9*_]+);$`)
+)
+
+func fixVariables(lines []Line) []Line {
+	var out []Line
+	for _, l := range lines {
+		if m := reVariable.FindStringSubmatch(l.code); m != nil {
+			if strings.HasSuffix(m[1], "*") {
+				m[1] = "*" + m[1][:len(m[1])-1]
+			}
+			switch m[1] {
+			case "return":
+			case "string":
+				l.code = m[2] + " := \"\""
+			case "int":
+				l.code = m[2] + " := 0"
+			case "int64_t":
+				l.code = "var " + m[2] + " int64"
+			case "uint64_t":
+				l.code = "var " + m[2] + " uint64"
+			case "size_t":
+				l.code = "var " + m[2] + " uint"
+			default:
+				l.code = "var " + m[2] + " " + m[1]
+			}
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+//
+
+var (
+	reTypeStruct = regexp.MustCompile(`^type [a-zA-Z0-9_]+ struct {$`)
+)
+
+// fixInsideStructs calls within with the block inside a struct.
+func fixInsideStructs(lines []Line, within func([]Line) []Line) []Line {
+	var out []Line
+	for i := 0; i < len(lines); i++ {
+		l := lines[i]
+		if reTypeStruct.MatchString(l.code) {
+			// Find the end, and process this part only.
+			b := countBrackets(l.code)
+			end := i
+			for ; b > 0 && end < len(lines); end++ {
+				b += countBrackets(lines[end].code)
+			}
+			end -= 2
+			// Append the function.
+			out = append(out, l)
+			if i+1 < end {
+				out = append(out, within(lines[i+1:end])...)
+				// And the trailing line, if applicable.
+				out = append(out, lines[end])
+				i = end
+			}
+		} else {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+//
+
+// fixMembers fix struct members. Because it also runs on functions inside
+// structs, it has to be run after fixVariables.
+func fixMembers(lines []Line) []Line {
+	var out []Line
+	for _, l := range lines {
+		if m := reVariable.FindStringSubmatch(l.code); m != nil {
+			if strings.HasSuffix(m[1], "*") {
+				m[1] = "*" + m[1][:len(m[1])-1]
+			}
+			switch m[1] {
+			case "return":
+			case "int64_t":
+				l.code = m[2] + " int64"
+			case "uint64_t":
+				l.code = m[2] + " uint64"
+			case "size_t":
+				l.code = m[2] + " uint"
+			default:
+				l.code = m[2] + " " + m[1]
+			}
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
 // End of fixups.
 
 // load loads a single .h/.cc and processes it to make it closer to Go.
@@ -1018,6 +1115,8 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = fixInsideFuncs(lines, fixPreIncrement)
 	lines = fixInsideFuncs(lines, fixClear)
 	lines = fixInsideFuncs(lines, fixAsserts)
+	lines = fixInsideFuncs(lines, fixVariables)
+	lines = fixInsideStructs(lines, fixMembers)
 	// TODO(maruel): Constructor, destructor.
 	// Remove const
 	// Change ++p to p++
