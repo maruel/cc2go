@@ -1108,53 +1108,77 @@ func fixAsserts(lines []Line) []Line {
 	return out
 }
 
-var (
-	reVariable = regexp.MustCompile(`^(?:const |struct |)(` + complexType + `) (\*?` + symbolSimple + `);$`)
-	reVector   = regexp.MustCompile(`^vector<(` + complexType + `)>$`)
-)
+var reVariable = regexp.MustCompile(`^(?:const |struct |)(` + complexType + `) (\*?` + symbolSimple + `);$`)
 
 func fixVariables(lines []Line) []Line {
 	var out []Line
 	for _, l := range lines {
-		if m := reVariable.FindStringSubmatch(l.code); m != nil {
-			if strings.HasSuffix(m[1], "*") || strings.HasSuffix(m[1], "&") {
-				m[1] = "*" + m[1][:len(m[1])-1]
-			}
-			if n := reVector.FindStringSubmatch(m[1]); n != nil {
-				switch n[1] {
-				case "float":
-					n[1] = "float32"
-				}
-				if strings.HasSuffix(n[1], "*") {
-					n[1] = "*" + n[1][:len(n[1])-1]
-				}
-				m[1] = "[]" + n[1]
-			}
-			switch m[1] {
-			case "return":
+		if m := reVariable.FindStringSubmatch(l.code); m != nil && m[1] != "return" {
+			t := reduceComplexType(m[1])
+			switch t {
 			case "string":
 				l.code = m[2] + " := \"\""
 			case "int":
 				l.code = m[2] + " := 0"
-			case "int64_t":
-				l.code = "var " + m[2] + " int64"
-			case "uint64_t":
-				l.code = "var " + m[2] + " uint64"
-			case "size_t":
-				l.code = "var " + m[2] + " uint"
-			case "long":
-				l.code = "var " + m[2] + " int32"
-			case "unsigned":
-				l.code = "var " + m[2] + " uint32"
-			case "double":
+			case "float64":
 				l.code = m[2] + " := 0."
 			default:
-				l.code = "var " + m[2] + " " + m[1]
+				l.code = "var " + m[2] + " " + t
 			}
 		}
 		out = append(out, l)
 	}
 	return out
+}
+
+var (
+	reVector = regexp.MustCompile(`^vector<(` + complexType + `)>$`)
+	reQueue  = regexp.MustCompile(`^queue<(` + complexType + `)>$`)
+	reSet    = regexp.MustCompile(`^set<(` + complexType + `)>$`)
+	reMap    = regexp.MustCompile(`^map<(` + complexType + `), (` + complexType + `)>$`)
+)
+
+// reduceComplexType reduces a complex type, e.g. "vector<uint64_t>" to
+// "[]uint64".
+func reduceComplexType(t string) string {
+	if strings.HasPrefix(t, "const ") {
+		t = t[len("const "):]
+	}
+	if m := reVector.FindStringSubmatch(t); m != nil {
+		return "[]" + reduceComplexType(m[1])
+	}
+	if m := reQueue.FindStringSubmatch(t); m != nil {
+		return "[...]" + reduceComplexType(m[1])
+	}
+	if m := reSet.FindStringSubmatch(t); m != nil {
+		return "map[" + reduceComplexType(m[1]) + "]struct{}"
+	}
+	if m := reMap.FindStringSubmatch(t); m != nil {
+		return "map[" + reduceComplexType(m[1]) + "]" + reduceComplexType(m[2])
+	}
+	if strings.HasSuffix(t, "*") || strings.HasSuffix(t, "&") {
+		t = "*" + t[:len(t)-1]
+	}
+	switch t {
+	case "return":
+		panic(t)
+	case "int64_t":
+		return "int64"
+	case "uint64_t":
+		return "uint64"
+	case "size_t":
+		return "uint"
+	case "long":
+		return "int32"
+	case "unsigned":
+		return "uint32"
+	case "float":
+		return "float32"
+	case "double":
+		return "float64"
+	default:
+		return t
+	}
 }
 
 //
@@ -1203,27 +1227,8 @@ func fixInsideStructs(lines []Line, within func([]Line) []Line) []Line {
 func fixMembers(lines []Line) []Line {
 	var out []Line
 	for _, l := range lines {
-		if m := reVariable.FindStringSubmatch(l.code); m != nil {
-			if strings.HasSuffix(m[1], "*") || strings.HasSuffix(m[1], "&") {
-				m[1] = "*" + m[1][:len(m[1])-1]
-			}
-			switch m[1] {
-			case "return":
-			case "int64_t":
-				l.code = m[2] + " int64"
-			case "uint64_t":
-				l.code = m[2] + " uint64"
-			case "size_t":
-				l.code = m[2] + " uint"
-			case "long":
-				l.code = m[2] + " int32"
-			case "unsigned":
-				l.code = m[2] + " uint32"
-			case "double":
-				l.code = m[2] + " float64"
-			default:
-				l.code = m[2] + " " + m[1]
-			}
+		if m := reVariable.FindStringSubmatch(l.code); m != nil && m[1] != "return" {
+			l.code = m[2] + " " + reduceComplexType(m[1])
 		}
 		out = append(out, l)
 	}
