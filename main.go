@@ -989,6 +989,12 @@ func fixVariables(lines []Line) []Line {
 				l.code = "var " + m[2] + " uint64"
 			case "size_t":
 				l.code = "var " + m[2] + " uint"
+			case "long":
+				l.code = "var " + m[2] + " int32"
+			case "unsigned":
+				l.code = "var " + m[2] + " uint32"
+			case "double":
+				l.code = m[2] + " := 0."
 			default:
 				l.code = "var " + m[2] + " " + m[1]
 			}
@@ -1051,6 +1057,12 @@ func fixMembers(lines []Line) []Line {
 				l.code = m[2] + " uint64"
 			case "size_t":
 				l.code = m[2] + " uint"
+			case "long":
+				l.code = m[2] + " int32"
+			case "unsigned":
+				l.code = m[2] + " uint32"
+			case "double":
+				l.code = m[2] + " float64"
 			default:
 				l.code = m[2] + " " + m[1]
 			}
@@ -1108,6 +1120,7 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = mergeParenthesis(lines)
 	lines = processFunctionDeclaration(lines, doc)
 	lines = processFunctionImplementation(lines, doc)
+	// TODO(maruel): Extract struct, enum and function defined within a struct.
 	lines = fixInsideFuncs(lines, fixIf)
 	lines = fixInsideFuncs(lines, fixWhile)
 	lines = fixInsideFuncs(lines, fixFor)
