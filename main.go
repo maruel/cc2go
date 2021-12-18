@@ -304,12 +304,14 @@ func mergeParenthesis(lines []Line) []Line {
 
 //
 
+const arguments = `[a-zA-Z0-9 *,=<>_:&\[\]]*`
+
 var (
 	reGoStruct               = regexp.MustCompile(`^type (` + symbolSimple + `) struct {$`)
 	reConstructorDeclaration = regexp.MustCompile(`^(` + symbolSimple + `)\s?\([a-zA-Z *,=<>_:&\[\]]*\);$`)
 	// e.g. "void bar();" or "virtual void bar() const = 0;"
 	// 1 is return type, 2 is name.
-	reFuncDeclaration = regexp.MustCompile(`^(?:virtual |static |)(` + complexType + `)\s+(` + symbolSimple + `)\s?\(([a-zA-Z0-9 *,=<>_:&\[\]]*)\)(?: const|)\s*(?:= 0|)\s*;$`)
+	reFuncDeclaration = regexp.MustCompile(`^(?:virtual |static |)(` + complexType + `)\s+(` + symbolSimple + `)\s?\((` + arguments + `)\)(?: const|)\s*(?:= 0|)\s*;$`)
 )
 
 // processFunctionDeclaration comments out forward declarations, grabbing
@@ -385,11 +387,13 @@ func getID(structName, funcName string) string {
 
 //
 
+const implementation = `{(?:|\s*}|\s*.+\s*})`
+
 var (
 	// 1 is return type, 2 is name, 3 is args, 4 is brackets
-	reFuncImplementation = regexp.MustCompile(`^(?:virtual |static |)(` + complexType + `)\s+(` + symbolSimple + `)\s?\(([a-zA-Z0-9 *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
+	reFuncImplementation = regexp.MustCompile(`^(?:virtual |static |)(` + complexType + `)\s+(` + symbolSimple + `)\s?\((` + arguments + `)\)(?:\s*const|)\s*(` + implementation + `)$`)
 	// 1 is return type, 2 is class, 3 is name, 4 is args, 5 is brackets
-	reMethodImplementation = regexp.MustCompile(`^(?:virtual |static |)(` + complexType + `)\s+(` + symbolSimple + `)::(` + symbolSimple + `)\s?\(([a-zA-Z0-9 *,=<>_:&\[\]]*)\)(?: const|)\s*({(?:|\s*}))$`)
+	reMethodImplementation = regexp.MustCompile(`^(?:virtual |static |)(` + complexType + `)\s+(` + symbolSimple + `)::(` + symbolSimple + `)\s?\((` + arguments + `)\)(?:\s*const|)\s*(` + implementation + `)$`)
 	// e.g. "TEST_F(DepfileParserTest, Continuation) {"
 	reGoogleTestfunc = regexp.MustCompile(`^TEST(?:|_F)\((` + symbolSimple + `), (` + symbolSimple + `)\) {$`)
 )
@@ -433,14 +437,28 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 			if m[1] == "void" {
 				m[1] = ""
 			}
+			ret := m[1]
 			funcName = m[2]
 			args, err := processArgs(m[3])
+			rest := m[4]
 			if err != nil {
 				panic(fmt.Sprintf("%s: %s", l.code, err))
 			}
+			var extra []Line
+			if strings.HasPrefix(rest, "{") && 0 == countBrackets(rest) {
+				// One liner, expand.
+				if !strings.HasSuffix(rest, "}") {
+					panic(rest)
+				}
+				if middle := strings.TrimSpace(rest[1 : len(rest)-1]); middle != "" {
+					extra = append(extra, Line{code: middle, indent: "\t"})
+					extra = append(extra, Line{code: "}"})
+					rest = "{"
+				}
+			}
 			// Extracting a function method defined inlined will be handled in
 			// extractEmbedded later.
-			l.code = rewriteFunc(structName, funcName, args, m[1], m[4])
+			l.code = rewriteFunc(structName, funcName, args, ret, rest)
 			if d := doc[getID(structName, funcName)]; len(d) != 0 {
 				// Insert the doc there, updating the indentation.
 				for _, x := range d {
@@ -448,6 +466,10 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 					out = append(out, x)
 				}
 			}
+			//panic(joinLines("* ", extra))
+			out = append(out, l)
+			out = append(out, extra...)
+			continue
 		} else if m := reMethodImplementation.FindStringSubmatch(l.code); m != nil {
 			// 1 is return type, 2 is class, 3 is name, 4 is args, 5 is brackets
 			if m[1] == "if" {
@@ -458,13 +480,27 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 			if m[1] == "void" {
 				m[1] = ""
 			}
+			ret := m[1]
 			structName = m[2]
 			funcName = m[3]
 			args, err := processArgs(m[4])
+			rest := m[5]
 			if err != nil {
 				panic(fmt.Sprintf("%s: %s", l.code, err))
 			}
-			l.code = rewriteFunc(structName, funcName, args, m[1], m[5])
+			var extra []Line
+			if strings.HasPrefix(rest, "{") && 0 == countBrackets(rest) {
+				// One liner, expand.
+				if !strings.HasSuffix(rest, "}") {
+					panic(rest)
+				}
+				if middle := strings.TrimSpace(rest[1 : len(rest)-1]); middle != "" {
+					extra = append(extra, Line{code: middle, indent: "\t"})
+					extra = append(extra, Line{code: "}"})
+					rest = "{"
+				}
+			}
+			l.code = rewriteFunc(structName, funcName, args, ret, rest)
 			if d := doc[getID(structName, funcName)]; len(d) != 0 {
 				// Insert the doc there, updating the indentation.
 				for _, x := range d {
@@ -472,6 +508,9 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 					out = append(out, x)
 				}
 			}
+			out = append(out, l)
+			out = append(out, extra...)
+			continue
 		}
 		out = append(out, l)
 	}
@@ -1354,6 +1393,7 @@ func load(raw []byte, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = mergeParenthesis(lines)
 	lines = processFunctionDeclaration(lines, doc)
 	lines = processFunctionImplementation(lines, doc)
+	//log.Printf("snapshot:\n%s", joinLines("x ", lines))
 	lines = extractEmbedded(lines)
 	lines = fixInsideFuncs(lines, fixIf)
 	lines = fixInsideFuncs(lines, fixWhile)

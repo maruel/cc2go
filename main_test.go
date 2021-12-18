@@ -678,15 +678,19 @@ struct Foo {
 type Foo struct {
   virtual ~Foo() {}
 
-  virtual vector<Edge*> Get() { return vector<Edge*>(); }
 }
 // The bar.
 type Bar struct {
   Bar() : edge(nil) {}
   edge *Edge
   output string
-  bool success() const { return status == Success; }
   }
+func (f *Foo) success() bool {
+	return status == Success
+}
+func (f *Foo) Get() []*Edge {
+	return vector<Edge*>()
+}
 func (f *Foo) Abort() {}
 
 `
