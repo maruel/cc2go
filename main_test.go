@@ -657,6 +657,7 @@ func TestLoad(t *testing.T) {
 
 /// Foo does stuff.
 struct Foo {
+	// Virtual class.
   virtual ~Foo() {}
   virtual bool Start(Edge* edge) const = 0;
 
@@ -676,7 +677,6 @@ struct Foo {
 	wantContent := `
 // Foo does stuff.
 type Foo struct {
-  virtual ~Foo() {}
 
 }
 // The bar.

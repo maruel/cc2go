@@ -613,7 +613,7 @@ func processArg(a string) (string, error) {
 func extractEmbedded(lines []Line) []Line {
 	var out []Line
 	for i := 0; i < len(lines); i++ {
-		if reGoStruct.MatchString(lines[i].code) {
+		if m := reGoStruct.FindStringSubmatch(lines[i].code); m != nil {
 			// Find the end, and process this part only.
 			b := countBrackets(lines[i].code)
 			end := i + 1
@@ -623,7 +623,7 @@ func extractEmbedded(lines []Line) []Line {
 			end -= 1
 			out = append(out, lines[i])
 			if i+1 < end {
-				inner, outer := huntForEmbedded(lines[i+1 : end])
+				inner, outer := huntForEmbedded(lines[i+1:end], m[1])
 				out = append(out, inner...)
 				// And the trailing line, if applicable.
 				out = append(out, lines[end])
@@ -646,10 +646,10 @@ func extractEmbedded(lines []Line) []Line {
 	return out
 }
 
-func huntForEmbedded(lines []Line) ([]Line, []Line) {
+func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 	var inner, outer []Line
 	for i := 0; i < len(lines); i++ {
-		if reGoStruct.MatchString(lines[i].code) {
+		if m := reGoStruct.FindStringSubmatch(lines[i].code); m != nil {
 			// Grab the documentation too.
 			start := i
 			for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
@@ -674,7 +674,7 @@ func huntForEmbedded(lines []Line) ([]Line, []Line) {
 			}
 			if i+1 < end {
 				// Recurse!
-				inner2, outer2 := huntForEmbedded(lines[i+1 : end])
+				inner2, outer2 := huntForEmbedded(lines[i+1:end], m[1])
 				for _, j := range inner2 {
 					if strings.HasPrefix(j.indent, offset) {
 						j.indent = j.indent[len(offset):]
@@ -707,6 +707,8 @@ func huntForEmbedded(lines []Line) ([]Line, []Line) {
 		} else if strings.HasPrefix(lines[i].code, "func ") || strings.HasPrefix(lines[i].code, "enum ") {
 			// Extract functions and enums the same way. Both will be
 			// processed/converted into Go types later.
+			// At this point, the functions were already converted to be Go method
+			// style. The only exception is constructor and destructor.
 
 			// Grab the documentation too.
 			start := i
@@ -742,11 +744,54 @@ func huntForEmbedded(lines []Line) ([]Line, []Line) {
 				//panic(joinLines("- ", lines))
 				i++
 			}
+			/*
+				} else if isConstructor(lines[i].code, structName) {
+					// First is to find all the lines, then extract.
+						// Grab the documentation too.
+						start := i
+						for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
+						}
+						// Pop the doc.
+						inner = inner[:len(inner)-(i-start)]
+
+						panic(lines[i].String())
+					inner = append(inner, lines[i])
+			*/
+		} else if isDestructor(lines[i].code, structName) {
+			if strings.HasSuffix(lines[i].code, "{}") {
+				// One liner virtual destructor, just zap it.
+				// Grab the documentation too.
+				start := i
+				for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
+				}
+				// Pop the doc.
+				inner = inner[:len(inner)-(i-start)]
+				l := lines[i]
+				l.doSkip()
+				inner = append(inner, l)
+			} else {
+				//panic(lines[i].String())
+				inner = append(inner, lines[i])
+			}
 		} else {
 			inner = append(inner, lines[i])
 		}
 	}
 	return inner, outer
+}
+
+func isConstructor(code, structName string) bool {
+	if strings.HasPrefix(code, "explicit ") {
+		code = code[len("explicit "):]
+	}
+	return strings.HasPrefix(code, structName+"(")
+}
+
+func isDestructor(code, structName string) bool {
+	if strings.HasPrefix(code, "virtual ") {
+		code = code[len("virtual "):]
+	}
+	return strings.HasPrefix(code, "~"+structName+"(")
 }
 
 //
