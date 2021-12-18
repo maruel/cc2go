@@ -1174,7 +1174,7 @@ func fixAsserts(lines []Line, receiver, structName, funcName string) []Line {
 
 var reVariable = regexp.MustCompile(`^(?:const |struct |)(` + complexType + `) (\*?` + symbolSimple + `);$`)
 
-func fixVariables(lines []Line, receiver, structName, funcName string) []Line {
+func fixVariableDeclaractions(lines []Line, receiver, structName, funcName string) []Line {
 	var out []Line
 	for _, l := range lines {
 		if m := reVariable.FindStringSubmatch(l.code); m != nil && m[1] != "return" {
@@ -1247,6 +1247,30 @@ func reduceComplexType(t string) string {
 
 //
 
+var (
+	// This one cannot start a the line, as it has to look back that the previous
+	// character isn't a ".".
+	reMember1 = regexp.MustCompile(`([^a-z\._])([a-z_]+_)\b`)
+	// This one only triggers at the start of the line for assignments.
+	reMember2 = regexp.MustCompile(`^([a-z_]+_)\b`)
+)
+
+// fixMemberAccess replaces all "foo_" inside a method to "p.foo_".
+func fixMemberAccess(lines []Line, receiver, structName, funcName string) []Line {
+	if receiver == "" {
+		return lines
+	}
+	var out []Line
+	for _, l := range lines {
+		l.code = reMember1.ReplaceAllString(l.code, "${1}"+receiver+".${2}")
+		l.code = reMember2.ReplaceAllString(l.code, receiver+".${1}")
+		out = append(out, l)
+	}
+	return out
+}
+
+//
+
 // fixInsideStructs calls within with the block inside a struct.
 func fixInsideStructs(lines []Line, within func(lines []Line, structName string) []Line) []Line {
 	var out []Line
@@ -1287,7 +1311,7 @@ func fixInsideStructs(lines []Line, within func(lines []Line, structName string)
 //
 
 // fixMembers fix struct members. Because it also runs on functions inside
-// structs, it has to be run after fixVariables.
+// structs, it has to be run after fixVariableDeclaractions.
 func fixMembers(lines []Line, structName string) []Line {
 	var out []Line
 	for _, l := range lines {
@@ -1421,7 +1445,8 @@ func load(raw []byte, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = fixInsideFuncs(lines, fixPreIncrement)
 	lines = fixInsideFuncs(lines, fixClear)
 	lines = fixInsideFuncs(lines, fixAsserts)
-	lines = fixInsideFuncs(lines, fixVariables)
+	lines = fixInsideFuncs(lines, fixVariableDeclaractions)
+	lines = fixInsideFuncs(lines, fixMemberAccess)
 	lines = fixInsideStructs(lines, fixMembers)
 	lines = processEnumDefinition(lines)
 	// TODO(maruel): Constructor, destructor.
