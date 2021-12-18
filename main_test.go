@@ -704,6 +704,28 @@ func (f *Foo) Abort() {}
 	}
 }
 
+func TestFindEnclosingBrackets(t *testing.T) {
+	data := []struct {
+		input string
+		want  int
+	}{
+		{"", -1},
+		{"a\nb", -1},
+		{"a{}", 0},
+		{"a{\n}", 1},
+		{"a{\n}\nc", 1},
+		{"a\n{\n}\nc", 2},
+	}
+	for i, l := range data {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			got := findEnclosingBrackets(split(l.input))
+			if diff := cmp.Diff(l.want, got); diff != "" {
+				t.Fatalf("mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func split(i string) []Line {
 	var o []Line
 	for _, j := range strings.Split(i, "\n") {

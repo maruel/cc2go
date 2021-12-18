@@ -210,6 +210,21 @@ func countBrackets(l string) int {
 	return count
 }
 
+// findEnclosingBrackets returns the index of the line where the corresponding
+// closing bracket is located.
+func findEnclosingBrackets(lines []Line) int {
+	b := 0
+	found := false
+	for i, l := range lines {
+		b += countBrackets(l.code)
+		found = found || strings.Contains(l.code, "{")
+		if found && b == 0 {
+			return i
+		}
+	}
+	return -1
+}
+
 // commentNamespace comment out "namespace foo {".
 //
 // Running it before processFunctionImplementation makes the function easier to
@@ -757,6 +772,11 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 				l.doSkip()
 				inner = append(inner, l)
 			} else {
+				// We want to move it outside. Finding brackets can be tricky because
+				// often code looks like this:
+				//   Foo()
+				//    : bar(0),
+				//      baz(1) {}
 				/*
 					// First is to find all the lines, then extract.
 					// Grab the documentation too.
@@ -771,22 +791,48 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 				inner = append(inner, lines[i])
 			}
 		} else if isDestructor(lines[i].code, structName) {
+			// Grab the documentation too.
+			start := i
+			for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
+			}
+			// Pop the doc.
+			// TODO(maruel): Keep it.
+			inner = inner[:len(inner)-(i-start)]
 			if strings.HasSuffix(lines[i].code, "{}") || (strings.HasSuffix(lines[i].code, ";") && !strings.Contains(lines[i].code, "{")) {
 				// One liner virtual destructor, just zap it.
 				// Also zap declaration without implementation, since it's of no use.
-
-				// Grab the documentation too.
-				start := i
-				for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
-				}
-				// Pop the doc.
-				inner = inner[:len(inner)-(i-start)]
 				l := lines[i]
 				l.doSkip()
 				inner = append(inner, l)
 			} else {
-				//panic(lines[i].String())
-				inner = append(inner, lines[i])
+				b := countBrackets(lines[i].code)
+				found := strings.Contains(lines[i].code, "{")
+				end := i + 1
+				for ; ((!found && end == i+1) || b > 0) && end < len(lines); end++ {
+					b += countBrackets(lines[end].code)
+				}
+				end -= 1
+				// Append the function implementation and its documentation.
+				offset := lines[i].indent
+				for x := start; x <= i; x++ {
+					j := lines[x]
+					if strings.HasPrefix(j.indent, offset) {
+						j.indent = j.indent[len(offset):]
+					}
+					outer = append(outer, j)
+				}
+				if i+1 < end {
+					for _, j := range lines[i+1 : end+1] {
+						if strings.HasPrefix(j.indent, offset) {
+							j.indent = j.indent[len(offset):]
+						}
+						outer = append(outer, j)
+					}
+					i = end
+				} else if i+1 == end {
+					//panic(joinLines("- ", lines))
+					i++
+				}
 			}
 		} else {
 			inner = append(inner, lines[i])
