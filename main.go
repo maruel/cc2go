@@ -1208,6 +1208,9 @@ func reduceComplexType(t string) string {
 	if strings.HasPrefix(t, "const ") {
 		t = t[len("const "):]
 	}
+	if strings.HasSuffix(t, " const") {
+		t = t[:len(t)-len(" const")]
+	}
 	prefix := ""
 	if strings.HasSuffix(t, "*") || strings.HasSuffix(t, "&") {
 		prefix = "*"
