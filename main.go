@@ -699,12 +699,7 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 			// Pop the doc.
 			inner = inner[:len(inner)-(i-start)]
 			// Find the end, and process this part only.
-			b := countBrackets(lines[i].code)
-			end := i + 1
-			for ; ((b == 0 && end == i+1) || b > 0) && end < len(lines); end++ {
-				b += countBrackets(lines[end].code)
-			}
-			end -= 1
+			end := findClosingBracket(lines[i:]) + i
 			// Append the function implementation and its documentation.
 			outer = append(outer, dedentLines(lines[i].indent, lines[start:i+1])...)
 			if i+1 < end {
@@ -760,13 +755,7 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 				l.doSkip()
 				inner = append(inner, l)
 			} else {
-				b := countBrackets(lines[i].code)
-				found := strings.Contains(lines[i].code, "{")
-				end := i + 1
-				for ; ((!found && end == i+1) || b > 0) && end < len(lines); end++ {
-					b += countBrackets(lines[end].code)
-				}
-				end -= 1
+				end := findClosingBracket(lines[i:]) + i
 				// Append the function implementation and its documentation.
 				outer = append(outer, dedentLines(lines[i].indent, lines[start:i+1])...)
 				if i+1 < end {
@@ -845,6 +834,7 @@ func fixInsideFuncs(lines []Line, within func(lines []Line, receiver, structName
 		}
 		if funcName != "" {
 			// Find the end, and process this part only.
+			//end := findClosingBracket(lines[i:]) + i
 			b := countBrackets(l.code)
 			end := i + 1
 			for ; b > 0 && end < len(lines); end++ {
