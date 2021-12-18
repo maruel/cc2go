@@ -1240,45 +1240,69 @@ func fixMembers(lines []Line) []Line {
 
 //
 
-var reEnumDefinition = regexp.MustCompile(`^enum (` + symbolSimple + `)\s*(.+)$`)
+var (
+	reEnumDefinition = regexp.MustCompile(`^enum (` + symbolSimple + `)\s*(.+)$`)
+	reEnumItem       = regexp.MustCompile(`^(` + symbolSimple + `),?$`)
+)
 
-/*
 // processEnumDefinition rewrites the enums.
 func processEnumDefinition(lines []Line) []Line {
 	var out []Line
 	for i := 0; i < len(lines); i++ {
-		l := lines[i]
-		if m := reEnumDefinition.FindStringSubmatch(l.code); m != nil {
+		if m := reEnumDefinition.FindStringSubmatch(lines[i].code); m != nil {
 			// There's 3 styles:
 			// - one liner
 			// - normal
 			// - normal but with the opening bracket on a separate line
-			var items []string
+			var items []Line
+			orig := lines[i]
 			if strings.Contains(m[2], "}") {
-				// one liner.
-				string
-			} else if !strings.Contains(m[2], "{") {
-				// Move the bracket up.
-			}
-			suffix := m[2]
-			if !strings.HasSuffix(suffix, ";") {
-				for strings.HasSuffix(suffix, ",") {
-					// It's a multi-lines definition. We need to skip the next line.
+				// One liner.
+				s := strings.TrimSpace(m[2])
+				if s[0] != '{' || !strings.HasSuffix(s, "};") {
+					panic(s)
+				}
+				s = s[1 : len(s)-2]
+				for _, item := range strings.Split(strings.TrimSpace(s), ",") {
+					items = append(items, Line{code: item, indent: "\t"})
+				}
+			} else {
+				if !strings.Contains(m[2], "{") {
+					// Move the bracket up.
+					if lines[i+1].code != "{" {
+						panic(lines[i+1])
+					}
 					i++
-					l.original = append(l.original, lines[i].original...)
-					suffix = lines[i].code
 				}
-				if !strings.HasSuffix(suffix, "{") {
-					panic(l.code)
+				i++
+				for ; reEnumItem.MatchString(lines[i].code) || (lines[i].code == "" && lines[i].comment != ""); i++ {
+					items = append(items, lines[i])
 				}
-				l.code = "type " + m[1] + " struct {"
+				if lines[i].code != "};" {
+					panic(lines[i].String())
+				}
 			}
+			// Generate.
+			orig.code = "type " + m[1] + " int"
+			out = append(out, orig)
+			out = append(out, Line{code: "const ("})
+			first := false
+			for _, item := range items {
+				// Cleanup then add.
+				item.code = strings.TrimRight(strings.TrimSpace(item.code), ",")
+				if !first && item.code != "" {
+					item.code += " " + m[1] + " = iota"
+					first = true
+				}
+				out = append(out, item)
+			}
+			out = append(out, Line{code: ")"})
+		} else {
+			out = append(out, lines[i])
 		}
-		out = append(out, l)
 	}
 	return out
 }
-*/
 
 // End of fixups.
 
@@ -1343,7 +1367,7 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = fixInsideFuncs(lines, fixAsserts)
 	lines = fixInsideFuncs(lines, fixVariables)
 	lines = fixInsideStructs(lines, fixMembers)
-	//lines = processEnumDefinition(lines)
+	lines = processEnumDefinition(lines)
 	// TODO(maruel): Constructor, destructor.
 	// Remove const
 	// Change ++p to p++
