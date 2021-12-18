@@ -689,7 +689,7 @@ type Bar struct {
   }
 func NewBar() Bar {
 	return Bar{
-	 : edge(nil) {}
+		edge: nil,
 	}
 }
 func (f *Foo) success() bool {

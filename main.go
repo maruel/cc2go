@@ -355,7 +355,7 @@ func mergeParenthesis(lines []Line) []Line {
 
 //
 
-const arguments = `[a-zA-Z0-9 *,=<>_:&\[\]"]*`
+const arguments = `[a-zA-Z0-9\-\. *,=<>_:&\[\]"]*`
 
 var (
 	reGoStruct               = regexp.MustCompile(`^type (` + symbolSimple + `) struct {$`)
@@ -826,7 +826,10 @@ func isDestructor(code, structName string) bool {
 	return strings.HasPrefix(strings.TrimPrefix(code, "virtual "), "~"+structName+"(")
 }
 
-var reConstructor = regexp.MustCompile(`^func (` + symbolSimple + `)\(.+$`)
+var (
+	reConstructor       = regexp.MustCompile(`^func (` + symbolSimple + `)\(.+$`)
+	reMemberInitializer = regexp.MustCompile(`^\s*(` + symbolSimple + `)\((` + arguments + `)\)\s*$`)
+)
 
 func rewriteConstructor(lines []Line, structName string) []Line {
 	var originals []string
@@ -843,20 +846,49 @@ func rewriteConstructor(lines []Line, structName string) []Line {
 	if args, err = processArgs(args); err != nil {
 		panic(err)
 	}
-	hdr := []Line{
+	out := []Line{
 		{original: originals, code: "func New" + structName + "(" + args + ") " + structName + " {"},
 		{indent: "\t", code: "return " + structName + "{"},
 	}
-	middle := []Line{
-		{indent: "\t", code: rest},
-	}
-	middle = append(middle, lines[1:]...)
-	tail := []Line{
-		{indent: "\t", code: "}"},
-		{code: "}"},
-	}
 
-	return append(append(hdr, middle...), tail...)
+	rest = strings.TrimSpace(rest)
+	for _, l := range lines[1:] {
+		rest += " " + strings.TrimSpace(l.code)
+	}
+	rest = strings.TrimSpace(rest)
+	rest = strings.TrimPrefix(rest, ":")
+	rest = strings.TrimSuffix(rest, "{}")
+	rest = strings.TrimSpace(rest)
+	impl := ""
+	if i := strings.Index(rest, "{"); i != -1 {
+		impl = rest[i:]
+		rest = rest[:i]
+	}
+	// Split manually with a state machine, since a regexp can't do it.
+	acc := ""
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		switch c {
+		case '(':
+			init, r := findMatchingParenthesis(rest[i+1:])
+			// Go memory is guaranteed to be zero initialized so trim these.
+			if init != "0" && init != "false" {
+				out = append(out, Line{indent: "\t\t", code: acc + ": " + init + ","})
+			}
+			i = -1
+			rest = strings.TrimPrefix(r, ",")
+			rest = strings.TrimSpace(rest)
+			acc = ""
+		default:
+			acc += string(c)
+		}
+	}
+	out = append(out, Line{indent: "\t", code: "}"})
+	if impl != "" {
+		out = append(out, Line{indent: "\t", code: impl})
+	}
+	out = append(out, Line{code: "}"})
+	return out
 }
 
 //
