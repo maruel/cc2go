@@ -389,8 +389,8 @@ type Foo struct {
 			`
 type Foo struct {
 };
-	type Bar struct {
-	};
+type Bar struct {
+};
 `,
 		},
 		{
@@ -407,8 +407,8 @@ type Foo struct {
 	int i;
 	int j;
 };
-	type Bar struct {
-	};
+type Bar struct {
+};
 `,
 		},
 		{
@@ -422,9 +422,43 @@ type Foo struct {
 			`
 type Foo struct {
 };
-	func foo() {
-		bar();
+func foo() {
+	bar();
+}
+`,
+		},
+		{
+			`
+type Foo struct {
+	enum Bar {
+		A
 	}
+};
+`,
+			`
+type Foo struct {
+};
+enum Bar {
+	A
+}
+`,
+		},
+		{
+			`
+type Foo struct {
+	enum Bar
+	{
+		A
+	}
+};
+`,
+			`
+type Foo struct {
+};
+enum Bar
+{
+	A
+}
 `,
 		},
 	}

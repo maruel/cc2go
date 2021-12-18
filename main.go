@@ -237,7 +237,7 @@ func commentNamespace(lines []Line) []Line {
 
 //
 
-var reStructDefinition = regexp.MustCompile(`^struct (` + symbolSimple + `)(.+)$`)
+var reStructDefinition = regexp.MustCompile(`^struct (` + symbolSimple + `)\s*(.+)$`)
 
 // processStructDefinition rewrites the structs.
 func processStructDefinition(lines []Line) []Line {
@@ -576,10 +576,6 @@ func extractEmbedded(lines []Line) []Line {
 	var out []Line
 	for i := 0; i < len(lines); i++ {
 		if reGoStruct.MatchString(lines[i].code) {
-			// Grab the documentation too.
-			start := i
-			for ; start >= 0 && lines[start].code == "" && strings.HasPrefix(lines[start].comment, "//"); start-- {
-			}
 			// Find the end, and process this part only.
 			b := countBrackets(lines[i].code)
 			end := i + 1
@@ -587,10 +583,7 @@ func extractEmbedded(lines []Line) []Line {
 				b += countBrackets(lines[end].code)
 			}
 			end -= 1
-			// Append the type declaration and its documentation.
-			for x := start; x <= i; x++ {
-				out = append(out, lines[x])
-			}
+			out = append(out, lines[i])
 			if i+1 < end {
 				inner, outer := huntForEmbedded(lines[i+1 : end])
 				out = append(out, inner...)
@@ -622,7 +615,7 @@ func huntForEmbedded(lines []Line) ([]Line, []Line) {
 		if reGoStruct.MatchString(lines[i].code) {
 			// Grab the documentation too.
 			start := i
-			for ; start >= 0 && lines[start].code == "" && strings.HasPrefix(lines[start].comment, "//"); start-- {
+			for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
 			}
 			// Find the end, and process this part only.
 			b := countBrackets(lines[i].code)
@@ -631,21 +624,31 @@ func huntForEmbedded(lines []Line) ([]Line, []Line) {
 				b += countBrackets(lines[end].code)
 			}
 			end -= 1
+			offset := lines[i].indent
 			// Append the type declaration and its documentation.
-			//offset := lines[start].indent
 			for x := start; x <= i; x++ {
-				outer = append(outer, lines[x])
+				j := lines[i]
+				if strings.HasPrefix(j.indent, offset) {
+					j.indent = j.indent[len(offset):]
+				}
+				outer = append(outer, j)
 			}
 			if i+1 < end {
 				// Recurse!
 				inner2, outer2 := huntForEmbedded(lines[i+1 : end])
 				for _, j := range inner2 {
+					if strings.HasPrefix(j.indent, offset) {
+						j.indent = j.indent[len(offset):]
+					}
 					outer = append(outer, j)
 				}
 				// And the trailing line, if applicable.
 				m := lines[end]
 				outer = append(outer, m)
 				for _, j := range outer2 {
+					if strings.HasPrefix(j.indent, offset) {
+						j.indent = j.indent[len(offset):]
+					}
 					outer = append(outer, j)
 				}
 				i = end
@@ -653,31 +656,49 @@ func huntForEmbedded(lines []Line) ([]Line, []Line) {
 				if !strings.HasSuffix(lines[end].code, "}") && !strings.HasSuffix(lines[end].code, "};") {
 					panic(lines[end].String())
 				}
-				outer = append(outer, lines[end])
+				j := lines[end]
+				if strings.HasPrefix(j.indent, offset) {
+					j.indent = j.indent[len(offset):]
+				}
+				outer = append(outer, j)
 				i = end
 			} else if i == end {
 				panic(end)
 			}
-		} else if strings.HasPrefix(lines[i].code, "func ") {
+		} else if strings.HasPrefix(lines[i].code, "func ") || strings.HasPrefix(lines[i].code, "enum ") {
+			// Extract functions and enums the same way. Both will be
+			// processed/converted into Go types later.
+
 			// Grab the documentation too.
 			start := i
-			for ; start >= 0 && lines[start].code == "" && strings.HasPrefix(lines[start].comment, "//"); start-- {
+			for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
 			}
 			// Find the end, and process this part only.
 			b := countBrackets(lines[i].code)
 			end := i + 1
-			for ; b > 0 && end < len(lines); end++ {
+			for ; ((b == 0 && end == i+1) || b > 0) && end < len(lines); end++ {
 				b += countBrackets(lines[end].code)
 			}
 			end -= 1
 			// Append the function implementation and its documentation.
-			//offset := lines[start].indent
+			offset := lines[i].indent
 			for x := start; x <= i; x++ {
-				outer = append(outer, lines[x])
+				j := lines[x]
+				if strings.HasPrefix(j.indent, offset) {
+					j.indent = j.indent[len(offset):]
+				}
+				outer = append(outer, j)
 			}
 			if i+1 < end {
-				outer = append(outer, lines[i+1:end+1]...)
+				for _, j := range lines[i+1 : end+1] {
+					if strings.HasPrefix(j.indent, offset) {
+						j.indent = j.indent[len(offset):]
+					}
+					outer = append(outer, j)
+				}
 				i = end
+			} else if i+1 == end {
+				//panic(joinLines("- ", lines))
 			}
 		} else {
 			inner = append(inner, lines[i])
@@ -1217,6 +1238,48 @@ func fixMembers(lines []Line) []Line {
 	return out
 }
 
+//
+
+var reEnumDefinition = regexp.MustCompile(`^enum (` + symbolSimple + `)\s*(.+)$`)
+
+/*
+// processEnumDefinition rewrites the enums.
+func processEnumDefinition(lines []Line) []Line {
+	var out []Line
+	for i := 0; i < len(lines); i++ {
+		l := lines[i]
+		if m := reEnumDefinition.FindStringSubmatch(l.code); m != nil {
+			// There's 3 styles:
+			// - one liner
+			// - normal
+			// - normal but with the opening bracket on a separate line
+			var items []string
+			if strings.Contains(m[2], "}") {
+				// one liner.
+				string
+			} else if !strings.Contains(m[2], "{") {
+				// Move the bracket up.
+			}
+			suffix := m[2]
+			if !strings.HasSuffix(suffix, ";") {
+				for strings.HasSuffix(suffix, ",") {
+					// It's a multi-lines definition. We need to skip the next line.
+					i++
+					l.original = append(l.original, lines[i].original...)
+					suffix = lines[i].code
+				}
+				if !strings.HasSuffix(suffix, "{") {
+					panic(l.code)
+				}
+				l.code = "type " + m[1] + " struct {"
+			}
+		}
+		out = append(out, l)
+	}
+	return out
+}
+*/
+
 // End of fixups.
 
 // load loads a single .h/.cc and processes it to make it closer to Go.
@@ -1255,12 +1318,17 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 
 	// Do in order:
 	// - type Foo struct {
+	// - enum Foo {
 	// - () on one line.
 	// - Save comments on func/method declaration.
 	// - Rewrite function implementation.
-	// - Fix conditions
-	// - Fix loops
-	// - Fix statements.
+	// - Fix conditions, loops
+	// - Fix assignments
+	// - Convert ++i to i++
+	// - Fix .clear()
+	// - Fix assert()
+	// - Fix variable declaration
+	// - Fix member declaration
 	lines = processStructDefinition(lines)
 	lines = mergeParenthesis(lines)
 	lines = processFunctionDeclaration(lines, doc)
@@ -1275,6 +1343,7 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = fixInsideFuncs(lines, fixAsserts)
 	lines = fixInsideFuncs(lines, fixVariables)
 	lines = fixInsideStructs(lines, fixMembers)
+	//lines = processEnumDefinition(lines)
 	// TODO(maruel): Constructor, destructor.
 	// Remove const
 	// Change ++p to p++
