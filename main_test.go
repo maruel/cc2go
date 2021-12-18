@@ -704,7 +704,7 @@ func (f *Foo) Abort() {}
 	}
 }
 
-func TestFindEnclosingBrackets(t *testing.T) {
+func TestFindClosingBracket(t *testing.T) {
 	data := []struct {
 		input string
 		want  int
@@ -718,7 +718,7 @@ func TestFindEnclosingBrackets(t *testing.T) {
 	}
 	for i, l := range data {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
-			got := findEnclosingBrackets(split(l.input))
+			got := findClosingBracket(split(l.input))
 			if diff := cmp.Diff(l.want, got); diff != "" {
 				t.Fatalf("mismatch (-want +got):\n%s", diff)
 			}

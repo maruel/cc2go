@@ -210,9 +210,11 @@ func countBrackets(l string) int {
 	return count
 }
 
-// findEnclosingBrackets returns the index of the line where the corresponding
+// findClosingBracket returns the index of the line where the corresponding
 // closing bracket is located.
-func findEnclosingBrackets(lines []Line) int {
+//
+// It works even if the opening bracket isn't on the first line.
+func findClosingBracket(lines []Line) int {
 	b := 0
 	found := false
 	for i, l := range lines {
@@ -630,30 +632,21 @@ func extractEmbedded(lines []Line) []Line {
 	for i := 0; i < len(lines); i++ {
 		if m := reGoStruct.FindStringSubmatch(lines[i].code); m != nil {
 			// Find the end, and process this part only.
-			b := countBrackets(lines[i].code)
-			end := i + 1
-			for ; b > 0 && end < len(lines); end++ {
-				b += countBrackets(lines[end].code)
-			}
-			end -= 1
+			end := findClosingBracket(lines[i:]) + i
 			out = append(out, lines[i])
-			if i+1 < end {
+			// If there's content inside.
+			if i < end+1 {
 				inner, outer := huntForEmbedded(lines[i+1:end], m[1])
 				out = append(out, inner...)
 				// And the trailing line, if applicable.
 				out = append(out, lines[end])
+				// Then the stuff.
 				out = append(out, outer...)
-				i = end
-			} else if i+1 == end {
+			} else if i != end {
 				// And the trailing line, if applicable.
-				if !strings.HasSuffix(lines[end].code, "}") && !strings.HasSuffix(lines[end].code, "};") {
-					panic(lines[end].String())
-				}
 				out = append(out, lines[end])
-				i = end
-			} else {
-				panic(end)
 			}
+			i = end
 		} else {
 			out = append(out, lines[i])
 		}
@@ -672,49 +665,23 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 			// Pop the doc.
 			inner = inner[:len(inner)-(i-start)]
 			// Find the end, and process this part only.
-			b := countBrackets(lines[i].code)
-			end := i + 1
-			for ; b > 0 && end < len(lines); end++ {
-				b += countBrackets(lines[end].code)
-			}
-			end -= 1
-			offset := lines[i].indent
+			end := findClosingBracket(lines[i:]) + i
+			indent := lines[i].indent
 			// Append the type declaration and its documentation.
-			for x := start; x <= i; x++ {
-				j := lines[x]
-				if strings.HasPrefix(j.indent, offset) {
-					j.indent = j.indent[len(offset):]
-				}
-				outer = append(outer, j)
-			}
+			outer = append(outer, dedentLines(indent, lines[start:i+1])...)
 			if i+1 < end {
 				// Recurse!
 				inner2, outer2 := huntForEmbedded(lines[i+1:end], m[1])
-				for _, j := range inner2 {
-					if strings.HasPrefix(j.indent, offset) {
-						j.indent = j.indent[len(offset):]
-					}
-					outer = append(outer, j)
-				}
+				outer = append(outer, dedentLines(indent, inner2)...)
 				// And the trailing line, if applicable.
-				m := lines[end]
-				outer = append(outer, m)
-				for _, j := range outer2 {
-					if strings.HasPrefix(j.indent, offset) {
-						j.indent = j.indent[len(offset):]
-					}
-					outer = append(outer, j)
-				}
+				outer = append(outer, lines[end])
+				outer = append(outer, dedentLines(indent, outer2)...)
 				i = end
 			} else if i+1 == end {
 				if !strings.HasSuffix(lines[end].code, "}") && !strings.HasSuffix(lines[end].code, "};") {
 					panic(lines[end].String())
 				}
-				j := lines[end]
-				if strings.HasPrefix(j.indent, offset) {
-					j.indent = j.indent[len(offset):]
-				}
-				outer = append(outer, j)
+				outer = append(outer, dedentLine(indent, lines[end]))
 				i = end
 			} else if i == end {
 				panic(end)
@@ -739,21 +706,9 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 			}
 			end -= 1
 			// Append the function implementation and its documentation.
-			offset := lines[i].indent
-			for x := start; x <= i; x++ {
-				j := lines[x]
-				if strings.HasPrefix(j.indent, offset) {
-					j.indent = j.indent[len(offset):]
-				}
-				outer = append(outer, j)
-			}
+			outer = append(outer, dedentLines(lines[i].indent, lines[start:i+1])...)
 			if i+1 < end {
-				for _, j := range lines[i+1 : end+1] {
-					if strings.HasPrefix(j.indent, offset) {
-						j.indent = j.indent[len(offset):]
-					}
-					outer = append(outer, j)
-				}
+				outer = append(outer, dedentLines(lines[i].indent, lines[i+1:end+1])...)
 				i = end
 			} else if i+1 == end {
 				//panic(joinLines("- ", lines))
@@ -813,21 +768,9 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 				}
 				end -= 1
 				// Append the function implementation and its documentation.
-				offset := lines[i].indent
-				for x := start; x <= i; x++ {
-					j := lines[x]
-					if strings.HasPrefix(j.indent, offset) {
-						j.indent = j.indent[len(offset):]
-					}
-					outer = append(outer, j)
-				}
+				outer = append(outer, dedentLines(lines[i].indent, lines[start:i+1])...)
 				if i+1 < end {
-					for _, j := range lines[i+1 : end+1] {
-						if strings.HasPrefix(j.indent, offset) {
-							j.indent = j.indent[len(offset):]
-						}
-						outer = append(outer, j)
-					}
+					outer = append(outer, dedentLines(lines[i].indent, lines[i+1:end+1])...)
 					i = end
 				} else if i+1 == end {
 					//panic(joinLines("- ", lines))
@@ -839,6 +782,25 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 		}
 	}
 	return inner, outer
+}
+
+func dedentLine(indent string, l Line) Line {
+	if strings.HasPrefix(l.indent, indent) {
+		l.indent = l.indent[len(indent):]
+	}
+	return l
+}
+
+func dedentLines(indent string, lines []Line) []Line {
+	out := make([]Line, len(lines))
+	copy(out, lines)
+	offset := len(indent)
+	for i, l := range out {
+		if strings.HasPrefix(l.indent, indent) {
+			out[i].indent = l.indent[offset:]
+		}
+	}
+	return out
 }
 
 func isConstructor(code, structName string) bool {
