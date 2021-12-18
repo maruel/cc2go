@@ -652,6 +652,54 @@ type Foo struct {
 	}
 }
 
+func TestLoad(t *testing.T) {
+	raw := `// Copyright.
+
+/// Foo does stuff.
+struct Foo {
+  virtual ~Foo() {}
+  virtual bool Start(Edge* edge) const = 0;
+
+  /// The bar.
+  struct Bar {
+    Bar() : edge(NULL) {}
+    Edge* edge;
+    std::string output;
+    bool success() const { return status == Success; }
+  };
+
+  virtual std::vector<Edge*> Get() { return std::vector<Edge*>(); }
+  virtual void Abort() {}
+};
+`
+	wantHdr := "// Copyright.\n"
+	wantContent := `
+// Foo does stuff.
+type Foo struct {
+  virtual ~Foo() {}
+
+  virtual vector<Edge*> Get() { return vector<Edge*>(); }
+}
+// The bar.
+type Bar struct {
+  Bar() : edge(nil) {}
+  edge *Edge
+  output string
+  bool success() const { return status == Success; }
+  }
+func (f *Foo) Abort() {}
+
+`
+	doc := map[string][]Line{}
+	gotHdr, gotContent := load([]byte(raw), false, doc)
+	if diff := cmp.Diff(wantHdr, gotHdr); diff != "" {
+		t.Fatalf("header mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff(wantContent, gotContent); diff != "" {
+		t.Fatalf("content mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func split(i string) []Line {
 	var o []Line
 	for _, j := range strings.Split(i, "\n") {

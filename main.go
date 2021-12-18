@@ -572,7 +572,6 @@ func processArg(a string) (string, error) {
 // It is different than fixInsideStructs below that here it extract content
 // from the struct.
 func extractEmbedded(lines []Line) []Line {
-	//log.Printf("extractEmbedded\n%s", joinLines("- ", lines))
 	var out []Line
 	for i := 0; i < len(lines); i++ {
 		if reGoStruct.MatchString(lines[i].code) {
@@ -609,7 +608,6 @@ func extractEmbedded(lines []Line) []Line {
 }
 
 func huntForEmbedded(lines []Line) ([]Line, []Line) {
-	//log.Printf("huntForEmbedded\n%s", joinLines("- ", lines))
 	var inner, outer []Line
 	for i := 0; i < len(lines); i++ {
 		if reGoStruct.MatchString(lines[i].code) {
@@ -629,7 +627,7 @@ func huntForEmbedded(lines []Line) ([]Line, []Line) {
 			offset := lines[i].indent
 			// Append the type declaration and its documentation.
 			for x := start; x <= i; x++ {
-				j := lines[i]
+				j := lines[x]
 				if strings.HasPrefix(j.indent, offset) {
 					j.indent = j.indent[len(offset):]
 				}
@@ -677,9 +675,6 @@ func huntForEmbedded(lines []Line) ([]Line, []Line) {
 			}
 			// Pop the doc.
 			inner = inner[:len(inner)-(i-start)]
-			//log.Printf("- %s", lines[i].String())
-			//log.Printf("- %d", i)
-			//log.Printf("- %d", start)
 			// Find the end, and process this part only.
 			b := countBrackets(lines[i].code)
 			end := i + 1
@@ -708,7 +703,6 @@ func huntForEmbedded(lines []Line) ([]Line, []Line) {
 				//panic(joinLines("- ", lines))
 				i++
 			}
-			//log.Printf("outer:\n%s", joinLines("- ", outer))
 		} else {
 			inner = append(inner, lines[i])
 		}
@@ -1319,13 +1313,7 @@ func processEnumDefinition(lines []Line) []Line {
 //
 // The resulting file is not syntactically valid Go but it will make manual fix
 // ups easier.
-func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
-	raw, err := os.ReadFile(name)
-	if err != nil {
-		return "", ""
-	}
-	log.Printf("load(%s)", name)
-
+func load(raw []byte, keepSkip bool, doc map[string][]Line) (string, string) {
 	// Do a first pass to trim obvious stuff.
 	var lines []Line
 	hdr := ""
@@ -1402,6 +1390,15 @@ func load(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 	return hdr, out
 }
 
+func loadFile(name string, keepSkip bool, doc map[string][]Line) (string, string) {
+	log.Printf("loadFile(%s)", name)
+	raw, err := os.ReadFile(name)
+	if err != nil {
+		return "", ""
+	}
+	return load(raw, keepSkip, doc)
+}
+
 // process processes a pair of .h/.cc files.
 func process(pkg, outDir, inDir, root string, keepSkip bool) error {
 	f := filepath.Join(outDir, root+".go")
@@ -1413,8 +1410,8 @@ func process(pkg, outDir, inDir, root string, keepSkip bool) error {
 		}
 	}
 	doc := map[string][]Line{}
-	hdr1, c1 := load(filepath.Join(inDir, root+".h"), keepSkip, doc)
-	hdr2, c2 := load(filepath.Join(inDir, root+".cc"), keepSkip, doc)
+	hdr1, c1 := loadFile(filepath.Join(inDir, root+".h"), keepSkip, doc)
+	hdr2, c2 := loadFile(filepath.Join(inDir, root+".cc"), keepSkip, doc)
 	out := hdr1
 	if hdr1 != hdr2 {
 		out += hdr2
