@@ -49,6 +49,7 @@ func (l *Line) String() string {
 	return l.indent + l.code + l.comment
 }
 
+/*
 func joinLines(prefix string, lines []Line) string {
 	out := ""
 	for _, l := range lines {
@@ -56,6 +57,7 @@ func joinLines(prefix string, lines []Line) string {
 	}
 	return out
 }
+*/
 
 // Phase 1
 
@@ -825,8 +827,7 @@ func isDestructor(code, structName string) bool {
 }
 
 func rewriteConstructor(lines []Line, structName string) []Line {
-	var out []Line
-	out = make([]Line, len(lines))
+	out := make([]Line, len(lines))
 	copy(out, lines)
 	// TODO(maruel): Actual rewrite.
 	out[0].code = strings.TrimPrefix(out[0].code, "explicit ")
@@ -1168,11 +1169,8 @@ func fixAssignments(lines []Line, receiver, structName, funcName string) []Line 
 	for _, l := range lines {
 		if m := reAssignment.FindStringSubmatch(l.code); m != nil {
 			// Ignore type.
-			if strings.HasPrefix(m[2], "*") {
-				// Pointer type can be touching the variable name.
-				m[2] = m[2][1:]
-			}
-			l.code = m[2] + " := " + m[3]
+			// Pointer type can be touching the variable name.
+			l.code = strings.TrimPrefix(m[2], "*") + " := " + m[3]
 		}
 		out = append(out, l)
 	}
