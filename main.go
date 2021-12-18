@@ -260,6 +260,31 @@ func commentNamespace(lines []Line) []Line {
 
 //
 
+func mergeStrings(lines []Line) []Line {
+	var out []Line
+	was := false
+	for _, l := range lines {
+		if was && strings.HasPrefix(l.code, "\"") {
+			// Merge with the prefix line.
+			i := len(out) - 1
+			out[i].original = append(out[i].original, l.original...)
+			out[i].code = out[i].code[:len(out[i].code)-1] + l.code[1:]
+			if l.comment != "" {
+				if out[i].comment != "" {
+					panic(l.String())
+				}
+				out[i].comment = l.comment
+			}
+		} else {
+			out = append(out, l)
+		}
+		was = strings.HasSuffix(l.code, "\"")
+	}
+	return out
+}
+
+//
+
 var reStructDefinition = regexp.MustCompile(`^struct (` + symbolSimple + `)\s*(.+)$`)
 
 // processStructDefinition rewrites the structs.
@@ -1483,6 +1508,7 @@ func load(raw []byte, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = commentDefines(lines)
 	lines = commentExtern(lines)
 	lines = commentNamespace(lines)
+	lines = mergeStrings(lines)
 
 	// Do in order:
 	// - type Foo struct {
