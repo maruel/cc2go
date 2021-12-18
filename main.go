@@ -826,12 +826,37 @@ func isDestructor(code, structName string) bool {
 	return strings.HasPrefix(strings.TrimPrefix(code, "virtual "), "~"+structName+"(")
 }
 
+var reConstructor = regexp.MustCompile(`^func (` + symbolSimple + `)\(.+$`)
+
 func rewriteConstructor(lines []Line, structName string) []Line {
-	out := make([]Line, len(lines))
-	copy(out, lines)
-	// TODO(maruel): Actual rewrite.
-	out[0].code = strings.TrimPrefix(out[0].code, "explicit ")
-	return out
+	var originals []string
+	for _, l := range lines {
+		originals = append(originals, l.original...)
+	}
+	code := strings.TrimPrefix(lines[0].code, "explicit ")
+	if !strings.HasPrefix(code, structName+"(") {
+		panic(lines[0].String())
+	}
+	// Find the matching closing parenthesis.
+	args, rest := findMatchingParenthesis(strings.TrimPrefix(code, structName+"("))
+	var err error
+	if args, err = processArgs(args); err != nil {
+		panic(err)
+	}
+	hdr := []Line{
+		{original: originals, code: "func New" + structName + "(" + args + ") " + structName + " {"},
+		{indent: "\t", code: "return " + structName + "{"},
+	}
+	middle := []Line{
+		{indent: "\t", code: rest},
+	}
+	middle = append(middle, lines[1:]...)
+	tail := []Line{
+		{indent: "\t", code: "}"},
+		{code: "}"},
+	}
+
+	return append(append(hdr, middle...), tail...)
 }
 
 //
@@ -907,17 +932,8 @@ var (
 
 // cleanCond takes the condition and returns the cleaned version and the rest.
 func cleanCond(cond string) (string, string) {
-	i := 0
-	count := 1
-	for ; count != 0 && i < len(cond); i++ {
-		if cond[i] == '(' {
-			count++
-		} else if cond[i] == ')' {
-			count--
-		}
-	}
-	rest := strings.TrimSpace(cond[i:])
-	cond = cond[:i-1]
+	cond, rest := findMatchingParenthesis(cond)
+	rest = strings.TrimSpace(rest)
 	// For conditions with nothing but a word, let's assume it checks for
 	// nil. It's going to be wrong often but I think it's more often right
 	// than wrong.
@@ -933,6 +949,20 @@ func cleanCond(cond string) (string, string) {
 		cond = "len(" + cond[1:len(cond)-len(".empty()")] + ") != 0"
 	}
 	return cond, rest
+}
+
+// findMatchingParenthesis returns the closing parenthesis
+func findMatchingParenthesis(l string) (string, string) {
+	i := 0
+	count := 1
+	for ; count != 0 && i < len(l); i++ {
+		if l[i] == '(' {
+			count++
+		} else if l[i] == ')' {
+			count--
+		}
+	}
+	return l[:i-1], l[i:]
 }
 
 // fixIfOneline handles one line or more lines if a one liner is found.

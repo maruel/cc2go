@@ -687,7 +687,11 @@ type Bar struct {
   edge *Edge
   output string
   }
-Bar() : edge(nil) {}
+func NewBar() Bar {
+	return Bar{
+	 : edge(nil) {}
+	}
+}
 func (f *Foo) success() bool {
 	return status == Success
 }
