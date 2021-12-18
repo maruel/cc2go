@@ -304,7 +304,7 @@ func mergeParenthesis(lines []Line) []Line {
 
 //
 
-const arguments = `[a-zA-Z0-9 *,=<>_:&\[\]]*`
+const arguments = `[a-zA-Z0-9 *,=<>_:&\[\]"]*`
 
 var (
 	reGoStruct               = regexp.MustCompile(`^type (` + symbolSimple + `) struct {$`)
