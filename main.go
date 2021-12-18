@@ -758,8 +758,10 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 					inner = append(inner, lines[i])
 			*/
 		} else if isDestructor(lines[i].code, structName) {
-			if strings.HasSuffix(lines[i].code, "{}") {
+			if strings.HasSuffix(lines[i].code, "{}") || (strings.HasSuffix(lines[i].code, ";") && !strings.Contains(lines[i].code, "{")) {
 				// One liner virtual destructor, just zap it.
+				// Also zap declaration without implementation, since it's of no use.
+
 				// Grab the documentation too.
 				start := i
 				for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
