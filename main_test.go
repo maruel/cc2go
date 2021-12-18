@@ -530,7 +530,7 @@ func foo() { bar(); }
 	for i, l := range data {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			var gotInside []Line
-			lines := fixInsideFuncs(split(l.input), func(in []Line) []Line {
+			lines := fixInsideFuncs(split(l.input), func(in []Line, _, _, _ string) []Line {
 				gotInside = make([]Line, len(in))
 				copy(gotInside, in)
 				var out []Line

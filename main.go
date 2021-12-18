@@ -751,14 +751,31 @@ func huntForEmbedded(lines []Line) ([]Line, []Line) {
 
 //
 
+var (
+	reGoFunc   = regexp.MustCompile(`^func (` + symbolSimple + `)\(.+$`)
+	reGoMethod = regexp.MustCompile(`^func \(([a-z]) \*(` + symbolSimple + `)\) (` + symbolSimple + `)\(.+$`)
+)
+
 // fixInsideFuncs calls within with the block inside a function.
-func fixInsideFuncs(lines []Line, within func([]Line) []Line) []Line {
+func fixInsideFuncs(lines []Line, within func(lines []Line, receiver, structName, funcName string) []Line) []Line {
 	var out []Line
 	for i := 0; i < len(lines); i++ {
 		l := lines[i]
 		// Look for functions. It is easy now that the functions start with
 		// "func " and that they are on one line.
-		if strings.HasPrefix(l.code, "func ") {
+		receiver := ""
+		structName := ""
+		funcName := ""
+		if m := reGoFunc.FindStringSubmatch(l.code); m != nil {
+			funcName = m[1]
+		} else if m := reGoMethod.FindStringSubmatch(l.code); m != nil {
+			receiver = m[1]
+			structName = m[2]
+			funcName = m[3]
+		} else if strings.HasPrefix(l.code, "func ") {
+			panic(l.code)
+		}
+		if funcName != "" {
 			// Find the end, and process this part only.
 			b := countBrackets(l.code)
 			end := i + 1
@@ -769,7 +786,7 @@ func fixInsideFuncs(lines []Line, within func([]Line) []Line) []Line {
 			// Append the function.
 			out = append(out, l)
 			if i+1 < end {
-				out = append(out, within(lines[i+1:end])...)
+				out = append(out, within(lines[i+1:end], receiver, structName, funcName)...)
 				// And the trailing line, if applicable.
 				out = append(out, lines[end])
 				i = end
@@ -790,7 +807,7 @@ func fixInsideFuncs(lines []Line, within func([]Line) []Line) []Line {
 // fixIf does two things:
 //  - Fix one liners.
 //  - Remove the extra parenthesis.
-func fixIf(lines []Line) []Line {
+func fixIf(lines []Line, receiver, structName, funcName string) []Line {
 	var out []Line
 	for i := 0; i < len(lines); {
 		// Process "one line" at a time. The line can read multiple lines if it's a
@@ -916,7 +933,7 @@ func fixIfOneliner(indent string, lines []Line, isElse bool) (int, []Line) {
 // fixWhile does two things:
 //  - Fix one liners.
 //  - Remove the extra parenthesis.
-func fixWhile(lines []Line) []Line {
+func fixWhile(lines []Line, receiver, structName, funcName string) []Line {
 	var out []Line
 	for i := 0; i < len(lines); {
 		// Process "one line" at a time. The line can read multiple lines if it's a
@@ -971,7 +988,7 @@ func fixWhileOneliner(indent string, lines []Line) (int, []Line) {
 // fixFor does two things:
 //  - Fix one liners.
 //  - Remove the extra parenthesis.
-func fixFor(lines []Line) []Line {
+func fixFor(lines []Line, receiver, structName, funcName string) []Line {
 	var out []Line
 	for i := 0; i < len(lines); {
 		// Process "one line" at a time. The line can read multiple lines if it's a
@@ -1066,7 +1083,7 @@ func fixForOneliner(indent string, lines []Line) (int, []Line) {
 //
 
 // fixAssignments converts all assignments in a block.
-func fixAssignments(lines []Line) []Line {
+func fixAssignments(lines []Line, receiver, structName, funcName string) []Line {
 	var out []Line
 	for _, l := range lines {
 		if m := reAssignment.FindStringSubmatch(l.code); m != nil {
@@ -1084,7 +1101,7 @@ func fixAssignments(lines []Line) []Line {
 
 //
 
-func fixPreIncrement(lines []Line) []Line {
+func fixPreIncrement(lines []Line, receiver, structName, funcName string) []Line {
 	var out []Line
 	for _, l := range lines {
 		if strings.HasPrefix(l.code, "++") {
@@ -1100,7 +1117,7 @@ func fixPreIncrement(lines []Line) []Line {
 
 //
 
-func fixClear(lines []Line) []Line {
+func fixClear(lines []Line, receiver, structName, funcName string) []Line {
 	var out []Line
 	for _, l := range lines {
 		if strings.HasSuffix(l.code, ".clear();") {
@@ -1126,7 +1143,7 @@ var (
 )
 
 // fixAsserts handles asserts inside a function.
-func fixAsserts(lines []Line) []Line {
+func fixAsserts(lines []Line, receiver, structName, funcName string) []Line {
 	var out []Line
 	for _, l := range lines {
 		if m := reAssert.FindStringSubmatch(l.code); m != nil {
@@ -1153,9 +1170,11 @@ func fixAsserts(lines []Line) []Line {
 	return out
 }
 
+//
+
 var reVariable = regexp.MustCompile(`^(?:const |struct |)(` + complexType + `) (\*?` + symbolSimple + `);$`)
 
-func fixVariables(lines []Line) []Line {
+func fixVariables(lines []Line, receiver, structName, funcName string) []Line {
 	var out []Line
 	for _, l := range lines {
 		if m := reVariable.FindStringSubmatch(l.code); m != nil && m[1] != "return" {
@@ -1406,10 +1425,7 @@ func load(raw []byte, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = fixInsideStructs(lines, fixMembers)
 	lines = processEnumDefinition(lines)
 	// TODO(maruel): Constructor, destructor.
-	// Remove const
-	// Change ++p to p++
 	// addThisPointer(out)
-	// Convert enum
 
 	// At the very end, remove the trailing ";".
 	// Skip consecutive empty lines.
