@@ -49,7 +49,6 @@ func (l *Line) String() string {
 	return l.indent + l.code + l.comment
 }
 
-/*
 func joinLines(prefix string, lines []Line) string {
 	out := ""
 	for _, l := range lines {
@@ -57,7 +56,6 @@ func joinLines(prefix string, lines []Line) string {
 	}
 	return out
 }
-*/
 
 // Phase 1
 
@@ -147,20 +145,30 @@ func processLine(l string) Line {
 
 // Rest, in order.
 
-// commentDefines comments out #include and #define, including multi-lines
+// commentDefines comments out #include, #define and #if, including multi-lines
 // defines.
+//
+// It comments out all the #else / #endif part because one has to pick, and
+// keep both #if and #else parts leads to confusing broken code.
 func commentDefines(lines []Line) []Line {
 	var out []Line
-	indef := false
+	cont := false
+	elseBlock := false
 	for _, l := range lines {
-		if strings.HasPrefix(l.code, "#") {
-			indef = strings.HasSuffix(l.code, "\\")
+		if elseBlock {
+			elseBlock = !strings.HasPrefix(l.code, "#endif")
 			l.doSkip()
-		} else if indef {
-			indef = strings.HasSuffix(l.code, "\\")
+		} else if cont {
+			cont = strings.HasSuffix(l.code, "\\")
+			l.doSkip()
+		} else if strings.HasPrefix(l.code, "#else") {
+			elseBlock = true
+			l.doSkip()
+		} else if strings.HasPrefix(l.code, "#") {
+			cont = strings.HasSuffix(l.code, "\\")
 			l.doSkip()
 		} else {
-			indef = false
+			cont = false
 		}
 		out = append(out, l)
 	}
@@ -666,7 +674,11 @@ func extractEmbedded(lines []Line) []Line {
 	for i := 0; i < len(lines); i++ {
 		if m := reGoStruct.FindStringSubmatch(lines[i].code); m != nil {
 			// Find the end, and process this part only.
-			end := findClosingBracket(lines[i:]) + i
+			end := findClosingBracket(lines[i:])
+			if end == -1 {
+				panic(joinLines("x ", lines))
+			}
+			end += i
 			out = append(out, lines[i])
 			// If there's content inside.
 			if i < end+1 {
@@ -676,11 +688,12 @@ func extractEmbedded(lines []Line) []Line {
 				out = append(out, lines[end])
 				// Then the stuff.
 				out = append(out, outer...)
-			} else if i != end {
+				i = end
+			} else if i == end+1 {
 				// And the trailing line, if applicable.
 				out = append(out, lines[end])
+				i = end
 			}
-			i = end
 		} else {
 			out = append(out, lines[i])
 		}
