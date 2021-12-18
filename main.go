@@ -690,11 +690,8 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 	var inner, outer []Line
 	for i := 0; i < len(lines); i++ {
 		if m := reGoStruct.FindStringSubmatch(lines[i].code); m != nil {
-			// Grab the documentation too.
-			start := i
-			for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
-			}
-			// Pop the doc.
+			// Grab the documentation too and pop it from the output.
+			start := walkbackDoc(lines[:i])
 			inner = inner[:len(inner)-(i-start)]
 			// Find the end, and process this part only.
 			end := findClosingBracket(lines[i:]) + i
@@ -724,11 +721,8 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 			// At this point, the functions were already converted to be Go method
 			// style. The only exception is constructor and destructor.
 
-			// Grab the documentation too.
-			start := i
-			for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
-			}
-			// Pop the doc.
+			// Grab the documentation too and pop it from the output.
+			start := walkbackDoc(lines[:i])
 			inner = inner[:len(inner)-(i-start)]
 			// Find the end, and process this part only.
 			end := findClosingBracket(lines[i:]) + i
@@ -744,11 +738,8 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 		} else if isConstructor(lines[i].code, structName) {
 			if strings.HasSuffix(lines[i].code, ";") && !strings.Contains(lines[i].code, "{") {
 				// Zap declaration without implementation, since it's of no use.
-				// Grab the documentation too.
-				start := i
-				for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
-				}
-				// Pop the doc.
+				// Grab the documentation too and pop it from the output.
+				start := walkbackDoc(lines[:i])
 				inner = inner[:len(inner)-(i-start)]
 				l := lines[i]
 				l.doSkip()
@@ -761,11 +752,8 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 				//      baz(1) {}
 				/*
 					// First is to find all the lines, then extract.
-					// Grab the documentation too.
-					start := i
-					for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
-					}
-					// Pop the doc.
+					// Grab the documentation too and pop it from the output.
+					start := walkbackDoc(lines[:i])
 					inner = inner[:len(inner)-(i-start)]
 
 					panic(lines[i].String())
@@ -773,12 +761,8 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 				inner = append(inner, lines[i])
 			}
 		} else if isDestructor(lines[i].code, structName) {
-			// Grab the documentation too.
-			start := i
-			for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
-			}
-			// Pop the doc.
-			// TODO(maruel): Keep it.
+			// Grab the documentation too and pop it from the output.
+			start := walkbackDoc(lines[:i])
 			inner = inner[:len(inner)-(i-start)]
 			if strings.HasSuffix(lines[i].code, "{}") || (strings.HasSuffix(lines[i].code, ";") && !strings.Contains(lines[i].code, "{")) {
 				// One liner virtual destructor, just zap it.
@@ -809,6 +793,14 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 		}
 	}
 	return inner, outer
+}
+
+// walkbackDoc starts at the end and find the start of the documentation.
+func walkbackDoc(lines []Line) int {
+	start := len(lines)
+	for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
+	}
+	return start
 }
 
 func dedentLine(indent string, l Line) Line {
