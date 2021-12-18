@@ -494,7 +494,7 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 				panic(fmt.Sprintf("%s: %s", l.code, err))
 			}
 			var extra []Line
-			if strings.HasPrefix(rest, "{") && 0 == countBrackets(rest) {
+			if strings.HasPrefix(rest, "{") && countBrackets(rest) == 0 {
 				// One liner, expand.
 				if !strings.HasSuffix(rest, "}") {
 					panic(rest)
@@ -538,7 +538,7 @@ func processFunctionImplementation(lines []Line, doc map[string][]Line) []Line {
 				panic(fmt.Sprintf("%s: %s", l.code, err))
 			}
 			var extra []Line
-			if strings.HasPrefix(rest, "{") && 0 == countBrackets(rest) {
+			if strings.HasPrefix(rest, "{") && countBrackets(rest) == 0 {
 				// One liner, expand.
 				if !strings.HasSuffix(rest, "}") {
 					panic(rest)
@@ -750,15 +750,14 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 				//   Foo()
 				//    : bar(0),
 				//      baz(1) {}
-				/*
-					// First is to find all the lines, then extract.
-					// Grab the documentation too and pop it from the output.
-					start := walkbackDoc(lines[:i])
-					inner = inner[:len(inner)-(i-start)]
-
-					panic(lines[i].String())
-				*/
-				inner = append(inner, lines[i])
+				// First is to find all the lines, then extract.
+				// Grab the documentation too and pop it from the output.
+				start := walkbackDoc(lines[:i])
+				inner = inner[:len(inner)-(i-start)]
+				// Find the end, and process this part only.
+				end := findClosingBracket(lines[i:]) + i
+				outer = append(outer, rewriteConstructor(dedentLines(lines[i].indent, lines[i:end+1]), structName)...)
+				i = end
 			}
 		} else if isDestructor(lines[i].code, structName) {
 			// Grab the documentation too and pop it from the output.
@@ -804,36 +803,34 @@ func walkbackDoc(lines []Line) int {
 }
 
 func dedentLine(indent string, l Line) Line {
-	if strings.HasPrefix(l.indent, indent) {
-		l.indent = l.indent[len(indent):]
-	}
+	l.indent = strings.TrimPrefix(l.indent, indent)
 	return l
 }
 
 func dedentLines(indent string, lines []Line) []Line {
 	out := make([]Line, len(lines))
 	copy(out, lines)
-	offset := len(indent)
 	for i, l := range out {
-		if strings.HasPrefix(l.indent, indent) {
-			out[i].indent = l.indent[offset:]
-		}
+		out[i].indent = strings.TrimPrefix(l.indent, indent)
 	}
 	return out
 }
 
 func isConstructor(code, structName string) bool {
-	if strings.HasPrefix(code, "explicit ") {
-		code = code[len("explicit "):]
-	}
-	return strings.HasPrefix(code, structName+"(")
+	return strings.HasPrefix(strings.TrimPrefix(code, "explicit "), structName+"(")
 }
 
 func isDestructor(code, structName string) bool {
-	if strings.HasPrefix(code, "virtual ") {
-		code = code[len("virtual "):]
-	}
-	return strings.HasPrefix(code, "~"+structName+"(")
+	return strings.HasPrefix(strings.TrimPrefix(code, "virtual "), "~"+structName+"(")
+}
+
+func rewriteConstructor(lines []Line, structName string) []Line {
+	var out []Line
+	out = make([]Line, len(lines))
+	copy(out, lines)
+	// TODO(maruel): Actual rewrite.
+	out[0].code = strings.TrimPrefix(out[0].code, "explicit ")
+	return out
 }
 
 //
@@ -1291,12 +1288,8 @@ var (
 // reduceComplexType reduces a complex type, e.g. "vector<uint64_t>" to
 // "[]uint64".
 func reduceComplexType(t string) string {
-	if strings.HasPrefix(t, "const ") {
-		t = t[len("const "):]
-	}
-	if strings.HasSuffix(t, " const") {
-		t = t[:len(t)-len(" const")]
-	}
+	t = strings.TrimPrefix(t, "const ")
+	t = strings.TrimSuffix(t, " const")
 	prefix := ""
 	if strings.HasSuffix(t, "*") || strings.HasSuffix(t, "&") {
 		prefix = "*"
@@ -1375,7 +1368,7 @@ func fixInsideStructs(lines []Line, within func(lines []Line, structName string)
 			for ; b > 0 && end < len(lines); end++ {
 				b += countBrackets(lines[end].code)
 			}
-			end -= 1
+			end--
 			// Append the type declaration.
 			out = append(out, l)
 			if i+1 < end {
@@ -1561,7 +1554,6 @@ func load(raw []byte, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = fixInsideStructs(lines, fixMembers)
 	lines = processEnumDefinition(lines)
 	lines = processTypedef(lines)
-	// TODO(maruel): Constructor, destructor.
 
 	// At the very end, remove the trailing ";" and skip consecutive empty lines.
 	out := ""

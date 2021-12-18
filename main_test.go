@@ -493,7 +493,7 @@ func foo() {
 	bar();X
 }
 `,
-			[]Line{Line{original: []string{"\tbar();"}, indent: "\t", code: "bar();"}},
+			[]Line{{original: []string{"\tbar();"}, indent: "\t", code: "bar();"}},
 		},
 		{
 			`
@@ -596,9 +596,9 @@ type Foo struct {
 }
 `,
 			[]Line{
-				Line{original: []string{"\tfunc bar() {"}, indent: "\t", code: "func bar() {"},
-				Line{original: []string{"\t\tbaz();"}, indent: "\t\t", code: "baz();"},
-				Line{original: []string{"\t}"}, indent: "\t", code: "}"},
+				{original: []string{"\tfunc bar() {"}, indent: "\t", code: "func bar() {"},
+				{original: []string{"\t\tbaz();"}, indent: "\t\t", code: "baz();"},
+				{original: []string{"\t}"}, indent: "\t", code: "}"},
 			},
 		},
 		{
@@ -621,11 +621,11 @@ type Foo struct {
 }
 `,
 			[]Line{
-				Line{original: []string{"\ttype Inner struct {"}, indent: "\t", code: "type Inner struct {"},
-				Line{original: []string{"\t\tfunc bar() {"}, indent: "\t\t", code: "func bar() {"},
-				Line{original: []string{"\t\t\tbaz();"}, indent: "\t\t\t", code: "baz();"},
-				Line{original: []string{"\t\t}"}, indent: "\t\t", code: "}"},
-				Line{original: []string{"\t}"}, indent: "\t", code: "}"},
+				{original: []string{"\ttype Inner struct {"}, indent: "\t", code: "type Inner struct {"},
+				{original: []string{"\t\tfunc bar() {"}, indent: "\t\t", code: "func bar() {"},
+				{original: []string{"\t\t\tbaz();"}, indent: "\t\t\t", code: "baz();"},
+				{original: []string{"\t\t}"}, indent: "\t\t", code: "}"},
+				{original: []string{"\t}"}, indent: "\t", code: "}"},
 			},
 		},
 	}
@@ -684,10 +684,10 @@ type Foo struct {
 }
 // The bar.
 type Bar struct {
-  Bar() : edge(nil) {}
   edge *Edge
   output string
   }
+Bar() : edge(nil) {}
 func (f *Foo) success() bool {
 	return status == Success
 }
