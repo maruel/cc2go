@@ -77,6 +77,9 @@ var (
 	// A string.
 	reConstChar   = regexp.MustCompile(`const char\s?\*`)
 	reStringPiece = regexp.MustCompile(`\bStringPiece\b`)
+	// Handle reserved Go keyword.
+	reLen = regexp.MustCompile(`\blen\b`)
+	reVar = regexp.MustCompile(`\bvar\b`)
 
 	asciiSpace = [256]uint8{'\t': 1, '\n': 1, '\v': 1, '\f': 1, '\r': 1, ' ': 1}
 )
@@ -133,10 +136,9 @@ func processLine(l string) Line {
 	out.code = strings.ReplaceAll(out.code, "NULL", "nil")
 	out.code = reConstChar.ReplaceAllString(out.code, "string")
 	out.code = reStringPiece.ReplaceAllString(out.code, "string")
-
-	// TODO(maruel): Rename:
-	// len -> len1
-	// var -> var1
+	// Handle reserved Go keywords.
+	out.code = reLen.ReplaceAllString(out.code, "len2")
+	out.code = reVar.ReplaceAllString(out.code, "var2")
 	return out
 }
 
@@ -1513,7 +1515,6 @@ func load(raw []byte, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = fixInsideStructs(lines, fixMembers)
 	lines = processEnumDefinition(lines)
 	// TODO(maruel): Constructor, destructor.
-	// addThisPointer(out)
 
 	// At the very end, remove the trailing ";".
 	// Skip consecutive empty lines.
