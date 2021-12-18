@@ -1248,11 +1248,11 @@ func reduceComplexType(t string) string {
 //
 
 // fixInsideStructs calls within with the block inside a struct.
-func fixInsideStructs(lines []Line, within func([]Line) []Line) []Line {
+func fixInsideStructs(lines []Line, within func(lines []Line, structName string) []Line) []Line {
 	var out []Line
 	for i := 0; i < len(lines); i++ {
 		l := lines[i]
-		if reGoStruct.MatchString(l.code) {
+		if m := reGoStruct.FindStringSubmatch(l.code); m != nil {
 			// Find the end, and process this part only.
 			b := countBrackets(l.code)
 			end := i + 1
@@ -1263,7 +1263,7 @@ func fixInsideStructs(lines []Line, within func([]Line) []Line) []Line {
 			// Append the type declaration.
 			out = append(out, l)
 			if i+1 < end {
-				out = append(out, within(lines[i+1:end])...)
+				out = append(out, within(lines[i+1:end], m[1])...)
 				// And the trailing line, if applicable.
 				out = append(out, lines[end])
 				i = end
@@ -1288,7 +1288,7 @@ func fixInsideStructs(lines []Line, within func([]Line) []Line) []Line {
 
 // fixMembers fix struct members. Because it also runs on functions inside
 // structs, it has to be run after fixVariables.
-func fixMembers(lines []Line) []Line {
+func fixMembers(lines []Line, structName string) []Line {
 	var out []Line
 	for _, l := range lines {
 		if m := reVariable.FindStringSubmatch(l.code); m != nil && m[1] != "return" {

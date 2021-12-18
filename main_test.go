@@ -632,7 +632,7 @@ type Foo struct {
 	for i, l := range data {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			var gotInside []Line
-			lines := fixInsideStructs(split(l.input), func(in []Line) []Line {
+			lines := fixInsideStructs(split(l.input), func(in []Line, structName string) []Line {
 				gotInside = make([]Line, len(in))
 				copy(gotInside, in)
 				var out []Line
