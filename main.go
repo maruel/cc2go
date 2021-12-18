@@ -1208,41 +1208,43 @@ func reduceComplexType(t string) string {
 	if strings.HasPrefix(t, "const ") {
 		t = t[len("const "):]
 	}
-	if m := reVector.FindStringSubmatch(t); m != nil {
-		return "[]" + reduceComplexType(m[1])
-	}
-	if m := reQueue.FindStringSubmatch(t); m != nil {
-		return "[...]" + reduceComplexType(m[1])
-	}
-	if m := reSet.FindStringSubmatch(t); m != nil {
-		return "map[" + reduceComplexType(m[1]) + "]struct{}"
-	}
-	if m := reMap.FindStringSubmatch(t); m != nil {
-		return "map[" + reduceComplexType(m[1]) + "]" + reduceComplexType(m[2])
-	}
+	prefix := ""
 	if strings.HasSuffix(t, "*") || strings.HasSuffix(t, "&") {
-		t = "*" + t[:len(t)-1]
+		prefix = "*"
+		t = t[:len(t)-1]
+	} else if t[0] == '*' {
+		prefix = "*"
+		t = t[1:]
 	}
-	switch t {
-	case "return":
-		panic(t)
-	case "int64_t":
-		return "int64"
-	case "uint64_t":
-		return "uint64"
-	case "size_t":
-		return "uint"
-	case "long":
-		return "int32"
-	case "unsigned":
-		return "uint32"
-	case "float":
-		return "float32"
-	case "double":
-		return "float64"
-	default:
-		return t
+	if m := reVector.FindStringSubmatch(t); m != nil {
+		t = "[]" + reduceComplexType(m[1])
+	} else if m := reQueue.FindStringSubmatch(t); m != nil {
+		t = "[...]" + reduceComplexType(m[1])
+	} else if m := reSet.FindStringSubmatch(t); m != nil {
+		t = "map[" + reduceComplexType(m[1]) + "]struct{}"
+	} else if m := reMap.FindStringSubmatch(t); m != nil {
+		t = "map[" + reduceComplexType(m[1]) + "]" + reduceComplexType(m[2])
+	} else {
+		switch t {
+		case "return":
+			panic(t)
+		case "int64_t":
+			t = "int64"
+		case "uint64_t":
+			t = "uint64"
+		case "size_t":
+			t = "uint"
+		case "long":
+			t = "int32"
+		case "unsigned":
+			t = "uint32"
+		case "float":
+			t = "float32"
+		case "double":
+			t = "float64"
+		}
 	}
+	return prefix + t
 }
 
 //
