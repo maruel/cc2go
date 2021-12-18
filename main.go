@@ -617,6 +617,8 @@ func huntForEmbedded(lines []Line) ([]Line, []Line) {
 			start := i
 			for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
 			}
+			// Pop the doc.
+			inner = inner[:len(inner)-(i-start)]
 			// Find the end, and process this part only.
 			b := countBrackets(lines[i].code)
 			end := i + 1
@@ -673,6 +675,11 @@ func huntForEmbedded(lines []Line) ([]Line, []Line) {
 			start := i
 			for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
 			}
+			// Pop the doc.
+			inner = inner[:len(inner)-(i-start)]
+			//log.Printf("- %s", lines[i].String())
+			//log.Printf("- %d", i)
+			//log.Printf("- %d", start)
 			// Find the end, and process this part only.
 			b := countBrackets(lines[i].code)
 			end := i + 1
@@ -699,7 +706,9 @@ func huntForEmbedded(lines []Line) ([]Line, []Line) {
 				i = end
 			} else if i+1 == end {
 				//panic(joinLines("- ", lines))
+				i++
 			}
+			//log.Printf("outer:\n%s", joinLines("- ", outer))
 		} else {
 			inner = append(inner, lines[i])
 		}
@@ -1241,7 +1250,7 @@ func fixMembers(lines []Line) []Line {
 //
 
 var (
-	reEnumDefinition = regexp.MustCompile(`^enum (` + symbolSimple + `)\s*(.+)$`)
+	reEnumDefinition = regexp.MustCompile(`^enum (` + symbolSimple + `)\s*(.*)$`)
 	reEnumItem       = regexp.MustCompile(`^(` + symbolSimple + `),?$`)
 )
 

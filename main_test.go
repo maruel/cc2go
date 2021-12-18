@@ -414,6 +414,7 @@ type Bar struct {
 		{
 			`
 type Foo struct {
+	// Doc
 	func foo() {
 		bar();
 	}
@@ -422,6 +423,7 @@ type Foo struct {
 			`
 type Foo struct {
 };
+// Doc
 func foo() {
 	bar();
 }
@@ -446,6 +448,7 @@ enum Bar {
 		{
 			`
 type Foo struct {
+	// Doc
 	enum Bar
 	{
 		A
@@ -455,6 +458,7 @@ type Foo struct {
 			`
 type Foo struct {
 };
+// Doc
 enum Bar
 {
 	A
