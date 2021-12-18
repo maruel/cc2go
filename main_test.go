@@ -715,6 +715,8 @@ func TestFindClosingBracket(t *testing.T) {
 		{"a{\n}", 1},
 		{"a{\n}\nc", 1},
 		{"a\n{\n}\nc", 2},
+		{"a {\nif foo {\n}\n}\nc", 3},
+		{"a\n{\nif foo {\n}\n}\nc", 4},
 	}
 	for i, l := range data {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {

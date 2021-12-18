@@ -133,6 +133,10 @@ func processLine(l string) Line {
 	out.code = strings.ReplaceAll(out.code, "NULL", "nil")
 	out.code = reConstChar.ReplaceAllString(out.code, "string")
 	out.code = reStringPiece.ReplaceAllString(out.code, "string")
+
+	// TODO(maruel): Rename:
+	// len -> len1
+	// var -> var1
 	return out
 }
 
@@ -834,16 +838,11 @@ func fixInsideFuncs(lines []Line, within func(lines []Line, receiver, structName
 		}
 		if funcName != "" {
 			// Find the end, and process this part only.
-			//end := findClosingBracket(lines[i:]) + i
-			b := countBrackets(l.code)
-			end := i + 1
-			for ; b > 0 && end < len(lines); end++ {
-				b += countBrackets(lines[end].code)
-			}
-			end -= 1
+			end := findClosingBracket(lines[i:]) + i
 			// Append the function.
 			out = append(out, l)
 			if i+1 < end {
+				//log.Printf("Within func:\n%s", joinLines("- ", lines[i+1:end]))
 				out = append(out, within(lines[i+1:end], receiver, structName, funcName)...)
 				// And the trailing line, if applicable.
 				out = append(out, lines[end])
@@ -1341,6 +1340,7 @@ func fixInsideStructs(lines []Line, within func(lines []Line, structName string)
 		l := lines[i]
 		if m := reGoStruct.FindStringSubmatch(l.code); m != nil {
 			// Find the end, and process this part only.
+			//findClosingBracket()
 			b := countBrackets(l.code)
 			end := i + 1
 			for ; b > 0 && end < len(lines); end++ {
