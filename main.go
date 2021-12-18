@@ -744,19 +744,32 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 				//panic(joinLines("- ", lines))
 				i++
 			}
-			/*
-				} else if isConstructor(lines[i].code, structName) {
+		} else if isConstructor(lines[i].code, structName) {
+			if strings.HasSuffix(lines[i].code, ";") && !strings.Contains(lines[i].code, "{") {
+				// Zap declaration without implementation, since it's of no use.
+				// Grab the documentation too.
+				start := i
+				for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
+				}
+				// Pop the doc.
+				inner = inner[:len(inner)-(i-start)]
+				l := lines[i]
+				l.doSkip()
+				inner = append(inner, l)
+			} else {
+				/*
 					// First is to find all the lines, then extract.
-						// Grab the documentation too.
-						start := i
-						for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
-						}
-						// Pop the doc.
-						inner = inner[:len(inner)-(i-start)]
+					// Grab the documentation too.
+					start := i
+					for ; start > 0 && lines[start-1].code == "" && strings.HasPrefix(lines[start-1].comment, "//"); start-- {
+					}
+					// Pop the doc.
+					inner = inner[:len(inner)-(i-start)]
 
-						panic(lines[i].String())
-					inner = append(inner, lines[i])
-			*/
+					panic(lines[i].String())
+				*/
+				inner = append(inner, lines[i])
+			}
 		} else if isDestructor(lines[i].code, structName) {
 			if strings.HasSuffix(lines[i].code, "{}") || (strings.HasSuffix(lines[i].code, ";") && !strings.Contains(lines[i].code, "{")) {
 				// One liner virtual destructor, just zap it.
