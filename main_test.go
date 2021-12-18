@@ -671,7 +671,10 @@ struct Foo {
 
   virtual std::vector<Edge*> Get() { return std::vector<Edge*>(); }
   virtual void Abort() {}
+	typedef Fun stuff;
 };
+
+typedef bozo bit;
 `
 	wantHdr := "// Copyright.\n"
 	wantContent := `
@@ -692,6 +695,9 @@ func (f *Foo) Get() []*Edge {
 	return vector<Edge*>()
 }
 func (f *Foo) Abort() {}
+type stuff Fun
+
+type bit bozo
 
 `
 	doc := map[string][]Line{}

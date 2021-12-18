@@ -35,6 +35,7 @@ type Line struct {
 	skip bool
 }
 
+// doSkip comments out the line.
 func (l *Line) doSkip() {
 	l.comment = "//" + l.code + l.comment
 	l.code = ""
@@ -797,6 +798,12 @@ func huntForEmbedded(lines []Line, structName string) ([]Line, []Line) {
 					i++
 				}
 			}
+		} else if strings.HasPrefix(lines[i].code, "typedef ") {
+			// Move typedef outside of the struct since Go does not support embedded
+			// type but do not precess it yet, it will be mass processed later.
+			l := lines[i]
+			l.indent = ""
+			outer = append(outer, l)
 		} else {
 			inner = append(inner, lines[i])
 		}
@@ -1262,16 +1269,19 @@ func fixVariableDeclaractions(lines []Line, receiver, structName, funcName strin
 	var out []Line
 	for _, l := range lines {
 		if m := reVariable.FindStringSubmatch(l.code); m != nil && m[1] != "return" {
-			t := reduceComplexType(m[1])
-			switch t {
-			case "string":
-				l.code = m[2] + " := \"\""
-			case "int":
-				l.code = m[2] + " := 0"
-			case "float64":
-				l.code = m[2] + " := 0."
-			default:
-				l.code = "var " + m[2] + " " + t
+			if m[1] != "typedef" {
+				switch t := reduceComplexType(m[1]); t {
+				case "string":
+					l.code = m[2] + " := \"\""
+				case "int":
+					l.code = m[2] + " := 0"
+				case "float64":
+					l.code = m[2] + " := 0."
+				default:
+					l.code = "var " + m[2] + " " + t
+				}
+			} else {
+				panic(l.code)
 			}
 		}
 		out = append(out, l)
@@ -1405,7 +1415,7 @@ func fixInsideStructs(lines []Line, within func(lines []Line, structName string)
 func fixMembers(lines []Line, structName string) []Line {
 	var out []Line
 	for _, l := range lines {
-		if m := reVariable.FindStringSubmatch(l.code); m != nil && m[1] != "return" {
+		if m := reVariable.FindStringSubmatch(l.code); m != nil && m[1] != "return" && !strings.HasPrefix(m[1], "typedef ") {
 			l.code = m[2] + " " + reduceComplexType(m[1])
 		}
 		out = append(out, l)
@@ -1479,6 +1489,24 @@ func processEnumDefinition(lines []Line) []Line {
 	return out
 }
 
+//
+
+var reTypedef = regexp.MustCompile(`^typedef (` + complexType + `)\s+(` + symbolSimple + `);$`)
+
+// processTypedef rewrites typedef.
+func processTypedef(lines []Line) []Line {
+	var out []Line
+	for _, l := range lines {
+		if l.indent == "" {
+			if m := reTypedef.FindStringSubmatch(l.code); m != nil {
+				l.code = "type " + m[2] + " " + reduceComplexType(m[1])
+			}
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
 // End of fixups.
 
 // load loads a single .h/.cc and processes it to make it closer to Go.
@@ -1540,10 +1568,10 @@ func load(raw []byte, keepSkip bool, doc map[string][]Line) (string, string) {
 	lines = fixInsideFuncs(lines, fixMemberAccess)
 	lines = fixInsideStructs(lines, fixMembers)
 	lines = processEnumDefinition(lines)
+	lines = processTypedef(lines)
 	// TODO(maruel): Constructor, destructor.
 
-	// At the very end, remove the trailing ";".
-	// Skip consecutive empty lines.
+	// At the very end, remove the trailing ";" and skip consecutive empty lines.
 	out := ""
 	wasEmpty := false
 	for _, l := range lines {
