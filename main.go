@@ -1302,21 +1302,21 @@ func fixAsserts(lines []Line, receiver, structName, funcName string) []Line {
 		if m := reAssert.FindStringSubmatch(l.code); m != nil {
 			l.code = "if !" + m[1] + " { panic(\"oops\") }"
 		} else if m := reGoogleTestEQ.FindStringSubmatch(l.code); m != nil {
-			l.code = "if " + m[1] + " != " + m[2] + " { t.FailNow() }"
+			l.code = "if " + m[1] + " != " + m[2] + " { t.Fatal(\"expected equal\") }"
 		} else if m := reGoogleTestNE.FindStringSubmatch(l.code); m != nil {
-			l.code = "if " + m[1] + " == " + m[2] + " { t.FailNow() }"
+			l.code = "if " + m[1] + " == " + m[2] + " { t.Fatal(\"expected different\") }"
 		} else if m := reGoogleTestGT.FindStringSubmatch(l.code); m != nil {
-			l.code = "if " + m[1] + " <= " + m[2] + " { t.FailNow() }"
+			l.code = "if " + m[1] + " <= " + m[2] + " { t.Fatal(\"expected greater\") }"
 		} else if m := reGoogleTestGE.FindStringSubmatch(l.code); m != nil {
-			l.code = "if " + m[1] + " < " + m[2] + " { t.FailNow() }"
+			l.code = "if " + m[1] + " < " + m[2] + " { t.Fatal(\"expected greater or equal\") }"
 		} else if m := reGoogleTestLT.FindStringSubmatch(l.code); m != nil {
-			l.code = "if " + m[1] + " >= " + m[2] + " { t.FailNow() }"
+			l.code = "if " + m[1] + " >= " + m[2] + " { t.Fatal(\"expected less or equal\") }"
 		} else if m := reGoogleTestLE.FindStringSubmatch(l.code); m != nil {
-			l.code = "if " + m[1] + " > " + m[2] + " { t.FailNow() }"
+			l.code = "if " + m[1] + " > " + m[2] + " { t.Fatal(\"expected less\") }"
 		} else if m := reGoogleTestTrue.FindStringSubmatch(l.code); m != nil {
-			l.code = "if " + m[1] + " { t.FailNow() }"
+			l.code = "if !" + m[1] + " { t.Fatal(\"expected true\") }"
 		} else if m := reGoogleTestFalse.FindStringSubmatch(l.code); m != nil {
-			l.code = "if !" + m[1] + " { t.FailNow() }"
+			l.code = "if " + m[1] + " { t.Fatal(\"expected false\") }"
 		}
 		out = append(out, l)
 	}
@@ -1690,7 +1690,9 @@ var (
 )
 
 func assert(b bool) {
-  panic(b)
+	if !b {
+		panic(b)
+	}
 }
 
 func printf(f string, v...interface{}) {
