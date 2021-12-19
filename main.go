@@ -1110,7 +1110,7 @@ func fixWhileOneline(lines []Line) (int, []Line) {
 		// Trim the very first and very last parenthesis. There can be inside due
 		// to function calls.
 		cond, rest := cleanCond(l.code[len("while ("):])
-		l.code = "while " + cond + " {"
+		l.code = "for " + cond + " {"
 
 		// One liner?
 		if rest != "{" {
@@ -1616,8 +1616,8 @@ func load(raw []byte, keepSkip bool, doc map[string][]Line) (string, string) {
 	//log.Printf("snapshot:\n%s", joinLines("x ", lines))
 	lines = extractEmbedded(lines)
 	lines = fixInsideFuncs(lines, fixIf)
-	lines = fixInsideFuncs(lines, fixWhile)
 	lines = fixInsideFuncs(lines, fixFor)
+	lines = fixInsideFuncs(lines, fixWhile)
 	lines = fixInsideFuncs(lines, fixAssignments)
 	lines = fixInsideFuncs(lines, fixPreIncrement)
 	lines = fixInsideFuncs(lines, fixClear)
