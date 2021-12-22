@@ -108,14 +108,20 @@ func processLine(l string) Line {
 	if strings.HasPrefix(l, "///") {
 		l = l[1:]
 	}
-	if a := strings.Index(l, "//"); a != -1 {
-		if b := strings.LastIndexFunc(l[:a], func(r rune) bool { return !unicode.IsSpace(r) }); b != -1 {
-			a = b + 1
+	// Walk the line to find comments. Special handling of quote since "//" isn't a C++ comment.
+	out.code = l
+	inquote := false
+	for i := 0; i < len(l)-1; i++ {
+		if l[i] == '"' {
+			inquote = !inquote
+		} else if !inquote && l[i:i+2] == "//" {
+			if b := strings.LastIndexFunc(l[:i], func(r rune) bool { return !unicode.IsSpace(r) }); b != -1 {
+				i = b + 1
+			}
+			out.code = l[:i]
+			out.comment = l[i:]
+			break
 		}
-		out.code = l[:a]
-		out.comment = l[a:]
-	} else {
-		out.code = l
 	}
 
 	// Ignore C++ statements that are unnecessary in Go.
@@ -350,13 +356,17 @@ func mergeParenthesis(lines []Line) []Line {
 			acc.code += l.code
 			acc.comment += l.comment
 			if count == 0 {
-				// Output the line.
+				// Output the line and reset the accumulator.
 				out = append(out, acc)
-				acc = Line{indent: l.indent, skip: l.skip}
+				acc = Line{}
 			} else {
+				// Join the lines with a space.
 				acc.code += " "
 			}
 		}
+	}
+	if len(acc.code) != 0 {
+		panic(acc.code)
 	}
 	return out
 }
@@ -838,11 +848,6 @@ func isConstructor(code, structName string) bool {
 func isDestructor(code, structName string) bool {
 	return strings.HasPrefix(strings.TrimPrefix(code, "virtual "), "~"+structName+"(")
 }
-
-var (
-	reConstructor       = regexp.MustCompile(`^func (` + symbolSimple + `)\(.+$`)
-	reMemberInitializer = regexp.MustCompile(`^\s*(` + symbolSimple + `)\((` + arguments + `)\)\s*$`)
-)
 
 func rewriteConstructor(lines []Line, structName string) []Line {
 	var originals []string
