@@ -136,16 +136,37 @@ func processLine(l string) Line {
 	}
 
 	// Actual code.
-	out.code = strings.ReplaceAll(out.code, "std::", "")
-	out.code = strings.ReplaceAll(out.code, "const string&", "string")
-	out.code = strings.ReplaceAll(out.code, ".c_str()", "")
-	out.code = strings.ReplaceAll(out.code, "->", ".")
-	out.code = strings.ReplaceAll(out.code, "NULL", "nil")
+	out.code = replaceQuotesAware(out.code, "std::", "")
+	out.code = replaceQuotesAware(out.code, "const string&", "string")
+	out.code = replaceQuotesAware(out.code, ".c_str()", "")
+	out.code = replaceQuotesAware(out.code, "->", ".")
+	out.code = replaceQuotesAware(out.code, "NULL", "nil")
 	out.code = reConstChar.ReplaceAllString(out.code, "string")
 	out.code = reStringPiece.ReplaceAllString(out.code, "string")
 	// Handle reserved Go keywords.
 	out.code = reLen.ReplaceAllString(out.code, "len2")
 	out.code = reVar.ReplaceAllString(out.code, "var2")
+	return out
+}
+
+// replaceQuotesAware does a strings.ReplaceAll() while skipping content of
+// double-quotes.
+func replaceQuotesAware(l, base, repl string) string {
+	inquote := false
+	b := len(base)
+	out := ""
+	for i := 0; i < len(l); i++ {
+		c := l[i]
+		if c == '"' {
+			inquote = !inquote
+			out += string(c)
+		} else if !inquote && strings.HasPrefix(l[i:], base) {
+			out += repl
+			i += b - 1
+		} else {
+			out += string(c)
+		}
+	}
 	return out
 }
 
