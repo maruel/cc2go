@@ -982,8 +982,8 @@ func fixInsideFuncs(lines []Line, within func(lines []Line, receiver, structName
 //
 
 // fixIf does two things:
-//  - Fix one liners.
-//  - Remove the extra parenthesis.
+//   - Fix one liners.
+//   - Remove the extra parenthesis.
 func fixIf(lines []Line, receiver, structName, funcName string) []Line {
 	var out []Line
 	for i := 0; i < len(lines); {
@@ -1113,8 +1113,8 @@ func fixIfOneliner(indent string, lines []Line, isElse bool) (int, []Line) {
 //
 
 // fixWhile does two things:
-//  - Fix one liners.
-//  - Remove the extra parenthesis.
+//   - Fix one liners.
+//   - Remove the extra parenthesis.
 func fixWhile(lines []Line, receiver, structName, funcName string) []Line {
 	var out []Line
 	for i := 0; i < len(lines); {
@@ -1168,8 +1168,8 @@ func fixWhileOneliner(indent string, lines []Line) (int, []Line) {
 //
 
 // fixFor does two things:
-//  - Fix one liners.
-//  - Remove the extra parenthesis.
+//   - Fix one liners.
+//   - Remove the extra parenthesis.
 func fixFor(lines []Line, receiver, structName, funcName string) []Line {
 	var out []Line
 	for i := 0; i < len(lines); {
