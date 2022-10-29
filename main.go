@@ -1735,16 +1735,26 @@ func fprintf(w io.Writer, f string, v...interface{}) {
 
 func mainImpl() error {
 	v := flag.Bool("v", false, "verbose")
-	inDir := flag.String("i", "src", "input directory")
+	inDir := flag.String("i", ".", "input directory")
 	outDir := flag.String("o", ".", "output directory")
 	keepSkip := flag.Bool("s", false, "keep skipped lines")
-	pkg := flag.String("p", "ginja", "package name to use")
+	pkg := flag.String("p", "", "package name to use")
 	flag.Parse()
 	log.SetFlags(0)
 	if !*v {
 		log.SetOutput(io.Discard)
 	}
 
+	if !filepath.IsAbs(*inDir) {
+		var err error
+		*inDir, err = filepath.Abs(*inDir)
+		if err != nil {
+			return err
+		}
+	}
+	if *pkg == "" {
+		*pkg = filepath.Base(*inDir)
+	}
 	files := flag.Args()
 	if len(files) == 0 {
 		// Get the list of source files.
@@ -1786,7 +1796,7 @@ func mainImpl() error {
 
 	// Inject a file with helpers.
 	// #nosec G306
-	if err := os.WriteFile(filepath.Join(*outDir, *pkg+".go"), []byte("package "+*pkg+"\n"+glueContent), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(*outDir, "cc2go.go"), []byte("package "+*pkg+"\n"+glueContent), 0o644); err != nil {
 		return err
 	}
 
