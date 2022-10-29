@@ -675,6 +675,26 @@ struct Foo {
 };
 
 typedef bozo bit;
+
+static std::filesystem::path ExtractedFileName(unsigned int n, uint32_t zbi_type, bool raw) {
+	std::filesystem::path path;
+	char buf[32];
+	const auto info = ItemTypeInfo(zbi_type);
+	if (info.name) {
+		snprintf(buf, sizeof(buf), "%03u.", n);
+		std::string name(buf);
+		name += info.name;
+	//	for (auto& c : name) {
+	//		c = static_cast<unsigned char>(std::tolower(c));
+	//	}
+		path = std::move(name);
+	} else {
+		snprintf(buf, sizeof(buf), "%03u.%08x", n, zbi_type);
+		path = buf;
+	}
+	path += (raw && info.extension) ? info.extension : ".zbi";
+	return path;
+}
 `
 	wantHdr := "// Copyright.\n"
 	wantContent := `
@@ -702,6 +722,26 @@ func (f *Foo) Abort() {}
 type stuff Fun
 
 type bit bozo
+
+func ExtractedFileName(n uint, zbi_type uint32, raw bool) string {
+	path := ""
+	char buf[32]
+	info := ItemTypeInfo(zbi_type)
+	if info.name {
+		snprintf(buf, sizeof(buf), "%03u.", n)
+		string name(buf)
+		name += info.name
+	//	for (auto& c : name) {
+	//		c = static_cast<unsigned char>(std::tolower(c));
+	//	}
+		path = move(name)
+	} else {
+		snprintf(buf, sizeof(buf), "%03u.%08x", n, zbi_type)
+		path = buf
+	}
+	path += (raw && info.extension) ? info.extension : ".zbi"
+	return path
+}
 
 `
 	doc := map[string][]Line{}

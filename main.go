@@ -1230,7 +1230,17 @@ func cleanForParams(cond string) (string, string) {
 	}
 	rest := strings.TrimSpace(cond[i:])
 	cond = cond[:i-1]
+	// We never care about const denomination.
+	cond = strings.TrimPrefix(cond, "const ")
 
+	if strings.HasPrefix(cond, "auto") {
+		// It's a new style iteration.
+		cond = strings.TrimPrefix(cond, "auto")
+		cond = strings.TrimLeft(cond, " ")
+		cond = strings.TrimLeft(cond, "&")
+		cond = strings.TrimLeft(cond, " ")
+		// What remains is "foo : bar".
+	}
 	parts := strings.SplitN(cond, ";", 3)
 	if len(parts) != 3 {
 		panic(cond)
@@ -1397,6 +1407,7 @@ func reduceComplexType(t string) string {
 		prefix = "*"
 		t = t[1:]
 	}
+	// Handle common stdlib containers.
 	if m := reVector.FindStringSubmatch(t); m != nil {
 		t = "[]" + reduceComplexType(m[1])
 	} else if m := reQueue.FindStringSubmatch(t); m != nil {
@@ -1409,8 +1420,12 @@ func reduceComplexType(t string) string {
 		switch t {
 		case "return":
 			panic(t)
+		case "int32_t":
+			t = "int32"
 		case "int64_t":
 			t = "int64"
+		case "uint32_t":
+			t = "uint32"
 		case "uint64_t":
 			t = "uint64"
 		case "size_t":
@@ -1419,10 +1434,15 @@ func reduceComplexType(t string) string {
 			t = "int32"
 		case "unsigned":
 			t = "uint32"
+		case "unsigned int":
+			t = "uint"
 		case "float":
 			t = "float32"
 		case "double":
 			t = "float64"
+		// Kind of a hack.
+		case "filesystem::path":
+			t = "string"
 		}
 	}
 	return prefix + t
