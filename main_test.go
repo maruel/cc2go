@@ -684,9 +684,9 @@ static std::filesystem::path ExtractedFileName(unsigned int n, uint32_t zbi_type
 		snprintf(buf, sizeof(buf), "%03u.", n);
 		std::string name(buf);
 		name += info.name;
-	//	for (auto& c : name) {
-	//		c = static_cast<unsigned char>(std::tolower(c));
-	//	}
+		for (auto& c : name) {
+			c = static_cast<unsigned char>(std::tolower(c));
+		}
 		path = std::move(name);
 	} else {
 		snprintf(buf, sizeof(buf), "%03u.%08x", n, zbi_type);
@@ -731,9 +731,9 @@ func ExtractedFileName(n uint, zbi_type uint32, raw bool) string {
 		snprintf(buf, sizeof(buf), "%03u.", n)
 		string name(buf)
 		name += info.name
-	//	for (auto& c : name) {
-	//		c = static_cast<unsigned char>(std::tolower(c));
-	//	}
+		for c := range name {
+			c = static_cast<unsigned char>(tolower(c))
+		}
 		path = move(name)
 	} else {
 		snprintf(buf, sizeof(buf), "%03u.%08x", n, zbi_type)

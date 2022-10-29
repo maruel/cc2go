@@ -1241,6 +1241,18 @@ func cleanForParams(cond string) (string, string) {
 		cond = strings.TrimLeft(cond, " ")
 		// What remains is "foo : bar".
 	}
+	// There's two forms:
+	//   for (int i = 0; i < 10; i++) {
+	// or
+	//   for (const auto& foo : container) {
+	if strings.Contains(cond, ":") {
+		parts := strings.SplitN(cond, ":", 2)
+		if len(parts) != 2 {
+			panic(cond)
+		}
+		return strings.TrimSpace(parts[0]) + " := range " + strings.TrimSpace(parts[1]), rest
+	}
+
 	parts := strings.SplitN(cond, ";", 3)
 	if len(parts) != 3 {
 		panic(cond)
