@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -1674,6 +1674,7 @@ func load(raw []byte, keepSkip bool, doc map[string][]Line) (string, string) {
 
 func loadFile(name string, keepSkip bool, doc map[string][]Line) (string, string) {
 	log.Printf("loadFile(%s)", name)
+	// #nosec G304
 	raw, err := os.ReadFile(name)
 	if err != nil {
 		return "", ""
@@ -1684,7 +1685,8 @@ func loadFile(name string, keepSkip bool, doc map[string][]Line) (string, string
 // process processes a pair of .h/.cc files.
 func process(pkg, outDir, inDir, root string, keepSkip bool) error {
 	f := filepath.Join(outDir, root+".go")
-	if content, _ := ioutil.ReadFile(f); len(content) != 0 {
+	// #nosec G304
+	if content, _ := os.ReadFile(f); len(content) != 0 {
 		if !bytes.Contains(content, []byte("//go:build nobuild")) {
 			// It is legitimate, do not overwrite.
 			log.Printf("skipping %s", root+".go")
@@ -1699,6 +1701,7 @@ func process(pkg, outDir, inDir, root string, keepSkip bool) error {
 		out += hdr2
 	}
 	out += "\n//go:build nobuild\n\npackage " + pkg + "\n\n" + c1 + c2
+	// #nosec G306
 	return os.WriteFile(f, []byte(out), 0o644)
 }
 
@@ -1739,7 +1742,7 @@ func mainImpl() error {
 	flag.Parse()
 	log.SetFlags(0)
 	if !*v {
-		log.SetOutput(ioutil.Discard)
+		log.SetOutput(io.Discard)
 	}
 
 	files := flag.Args()
@@ -1760,6 +1763,7 @@ func mainImpl() error {
 			roots[n] = struct{}{}
 		}
 		if _, err := os.Stat(*outDir); os.IsNotExist(err) {
+			// #nosec G301
 			if err = os.Mkdir(*outDir, 0o755); err != nil {
 				return err
 			}
@@ -1781,12 +1785,14 @@ func mainImpl() error {
 	}
 
 	// Inject a file with helpers.
-	if err := ioutil.WriteFile(filepath.Join(*outDir, *pkg+".go"), []byte("package "+*pkg+"\n"+glueContent), 0o644); err != nil {
+	// #nosec G306
+	if err := os.WriteFile(filepath.Join(*outDir, *pkg+".go"), []byte("package "+*pkg+"\n"+glueContent), 0o644); err != nil {
 		return err
 	}
 
 	// Insert a go.mod if missing.
 	if _, err := os.Stat(filepath.Join(*outDir, "go.mod")); os.IsNotExist(err) {
+		// #nosec G204
 		cmd := exec.Command("go", "mod", "init", *pkg)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
