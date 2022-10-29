@@ -1543,7 +1543,7 @@ func fixMembers(lines []Line, structName string) []Line {
 
 var (
 	reEnumDefinition = regexp.MustCompile(`^enum (` + symbolSimple + `)\s*(.*)$`)
-	reEnumItem       = regexp.MustCompile(`^(` + symbolSimple + `),?$`)
+	reEnumItem       = regexp.MustCompile(`^` + symbolSimple + `(|\s*\=\s*[0-9x]*\s*),?$`)
 )
 
 // processEnumDefinition rewrites the enums.
@@ -1555,6 +1555,7 @@ func processEnumDefinition(lines []Line) []Line {
 			// - one liner
 			// - normal
 			// - normal but with the opening bracket on a separate line
+			// - normal with : type form.
 			var items []Line
 			orig := lines[i]
 			if strings.Contains(m[2], "}") {
@@ -1584,7 +1585,9 @@ func processEnumDefinition(lines []Line) []Line {
 				}
 			}
 			// Generate.
-			orig.code = "type " + m[1] + " int"
+			t := m[1]
+			// TODO(maruel): Handle = sign.
+			orig.code = "type " + t + " int"
 			out = append(out, orig)
 			out = append(out, Line{code: "const ("})
 			first := false
@@ -1592,7 +1595,7 @@ func processEnumDefinition(lines []Line) []Line {
 				// Cleanup then add.
 				item.code = strings.TrimRight(strings.TrimSpace(item.code), ",")
 				if !first && item.code != "" {
-					item.code += " " + m[1] + " = iota"
+					item.code += " " + t + " = iota"
 					first = true
 				}
 				out = append(out, item)

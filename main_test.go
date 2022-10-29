@@ -695,6 +695,11 @@ static std::filesystem::path ExtractedFileName(unsigned int n, uint32_t zbi_type
 	path += (raw && info.extension) ? info.extension : ".zbi";
 	return path;
 }
+
+enum LongOnlyOpt : int {
+  kOptRecompress = 0x100,
+  kOptFilesType = 0x101,
+};
 `
 	wantHdr := "// Copyright.\n"
 	wantContent := `
@@ -742,6 +747,12 @@ func ExtractedFileName(n uint, zbi_type uint32, raw bool) string {
 	path += (raw && info.extension) ? info.extension : ".zbi"
 	return path
 }
+
+type LongOnlyOpt int
+const (
+  kOptRecompress = 0x100 LongOnlyOpt = iota
+  kOptFilesType = 0x101
+)
 
 `
 	doc := map[string][]Line{}
